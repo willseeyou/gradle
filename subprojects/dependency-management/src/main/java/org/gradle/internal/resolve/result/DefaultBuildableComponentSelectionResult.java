@@ -18,10 +18,17 @@ package org.gradle.internal.resolve.result;
 
 import org.gradle.api.Nullable;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
+import org.gradle.internal.resolve.ModuleVersionResolveException;
+
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 public class DefaultBuildableComponentSelectionResult implements BuildableComponentSelectionResult {
     private State state = State.Unknown;
     private ModuleComponentIdentifier moduleComponentIdentifier;
+    private ModuleVersionResolveException failure;
+    private final Set<String> unmatchedVersions = new LinkedHashSet<String>();
+    private final Set<String> rejectedVersions = new LinkedHashSet<String>();
 
     public void matches(ModuleComponentIdentifier moduleComponentIdentifier) {
         setChosenComponentWithReason(State.Match, moduleComponentIdentifier);
@@ -34,6 +41,7 @@ public class DefaultBuildableComponentSelectionResult implements BuildableCompon
     private void setChosenComponentWithReason(State state, ModuleComponentIdentifier moduleComponentIdentifier) {
         this.state = state;
         this.moduleComponentIdentifier = moduleComponentIdentifier;
+        this.failure = null;
     }
 
     public State getState() {
@@ -41,6 +49,9 @@ public class DefaultBuildableComponentSelectionResult implements BuildableCompon
     }
 
     public ModuleComponentIdentifier getMatch() {
+        if (state != State.Match) {
+            throw new IllegalStateException("This result has not been resolved.");
+        }
         return moduleComponentIdentifier;
     }
 
@@ -51,7 +62,35 @@ public class DefaultBuildableComponentSelectionResult implements BuildableCompon
 
     @Nullable
     @Override
-    public Throwable getFailure() {
-        return null;
+    public ModuleVersionResolveException getFailure() {
+        if (state == State.Unknown) {
+            throw new IllegalStateException("This result has not been resolved.");
+        }
+        return failure;
+    }
+
+    @Override
+    public void failed(ModuleVersionResolveException failure) {
+        this.moduleComponentIdentifier = null;
+        this.failure = failure;
+        this.state = State.Failed;
+    }
+
+    public Set<String> getUnmatchedVersions() {
+        return unmatchedVersions;
+    }
+
+    @Override
+    public void notMatched(String candidateVersion) {
+        unmatchedVersions.add(candidateVersion);
+    }
+
+    public Set<String> getRejectedVersions() {
+        return rejectedVersions;
+    }
+
+    @Override
+    public void rejected(String version) {
+        rejectedVersions.add(version);
     }
 }

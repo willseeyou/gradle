@@ -17,8 +17,9 @@
 package org.gradle.model.internal.registry;
 
 import com.google.common.base.Joiner;
+import com.google.common.base.Optional;
+import com.google.common.base.Supplier;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.gradle.api.Nullable;
 import org.gradle.model.internal.core.*;
@@ -27,17 +28,26 @@ import org.gradle.model.internal.type.ModelType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.*;
+import java.util.List;
+import java.util.Set;
 
 abstract class ModelNodeInternal implements MutableModelNode {
+
+    private static final Supplier<List<MutatorRuleBinder<?>>> LIST_SUPPLIER = new Supplier<List<MutatorRuleBinder<?>>>() {
+        @Override
+        public List<MutatorRuleBinder<?>> get() {
+            return Lists.newArrayList();
+        }
+    };
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ModelNodeInternal.class);
 
     private CreatorRuleBinder creatorBinder;
-    private Map<ModelActionRole, List<MutatorRuleBinder<?>>> mutators;
     private final Set<ModelNodeInternal> dependencies = Sets.newHashSet();
     private final Set<ModelNodeInternal> dependents = Sets.newHashSet();
     private ModelNode.State state = ModelNode.State.Known;
+    private boolean hidden;
+    private final List<ModelRuleDescriptor> executedRules = Lists.newArrayList();
 
     public ModelNodeInternal(CreatorRuleBinder creatorBinder) {
         this.creatorBinder = creatorBinder;
@@ -70,69 +80,28 @@ abstract class ModelNodeInternal implements MutableModelNode {
     }
 
     @Override
+    public boolean isHidden() {
+        return hidden;
+    }
+
+    @Override
+    public void setHidden(boolean hidden) {
+        this.hidden = hidden;
+    }
+
+    @Override
     public boolean isEphemeral() {
         return creatorBinder.getCreator().isEphemeral();
     }
 
-    public void addMutatorBinder(ModelActionRole role, MutatorRuleBinder<?> mutator) {
-        if (mutators == null) {
-            mutators = Maps.newEnumMap(ModelActionRole.class);
-        }
-
-        List<MutatorRuleBinder<?>> mutatorsForRole = mutators.get(role);
-        if (mutatorsForRole == null) {
-            mutatorsForRole = Lists.newLinkedList();
-            mutators.put(role, mutatorsForRole);
-        }
-
-        mutatorsForRole.add(mutator);
-    }
-
-    public Iterable<MutatorRuleBinder<?>> getMutatorBinders(ModelActionRole role) {
-        if (mutators == null) {
-            return Collections.emptyList();
-        }
-        final List<MutatorRuleBinder<?>> ruleBinders = mutators.get(role);
-        if (ruleBinders == null) {
-            return Collections.emptyList();
-        } else {
-            return new Iterable<MutatorRuleBinder<?>>() {
-                @Override
-                public Iterator<MutatorRuleBinder<?>> iterator() {
-                    return new Iterator<MutatorRuleBinder<?>>() {
-                        int i;
-
-                        @Override
-                        public void remove() {
-                            throw new UnsupportedOperationException();
-                        }
-
-                        @Override
-                        public boolean hasNext() {
-                            return i < ruleBinders.size();
-                        }
-
-                        @Override
-                        public MutatorRuleBinder<?> next() {
-                            if (hasNext()) {
-                                return ruleBinders.get(i++);
-                            } else {
-                                throw new NoSuchElementException();
-                            }
-                        }
-                    };
-                }
-            };
-        }
-    }
-
-    public void notifyFired(MutatorRuleBinder<?> binder) {
-        assert binder.isBound();
-        for (ModelBinding<?> inputBinding : binder.getInputBindings()) {
+    public void notifyFired(RuleBinder binder) {
+        assert binder.isBound() : "RuleBinder must be in a bound state";
+        for (ModelBinding inputBinding : binder.getInputBindings()) {
             ModelNodeInternal node = inputBinding.getNode();
             dependencies.add(node);
             node.dependents.add(this);
         }
+        executedRules.add(binder.getDescriptor());
     }
 
     public Iterable<? extends ModelNode> getDependencies() {
@@ -163,9 +132,9 @@ abstract class ModelNodeInternal implements MutableModelNode {
         return state.mutable;
     }
 
-    public boolean canApply(ModelActionRole type) {
-        return type.ordinal() >= state.ordinal() - ModelNode.State.Created.ordinal();
-    }
+    @Nullable
+    @Override
+    public abstract ModelNodeInternal getLink(String name);
 
     public ModelPromise getPromise() {
         return creatorBinder.getCreator().getPromise();
@@ -180,29 +149,7 @@ abstract class ModelNodeInternal implements MutableModelNode {
         return getPath().toString();
     }
 
-    public abstract ModelNodeInternal getTarget();
-
     public abstract Iterable<? extends ModelNodeInternal> getLinks();
-
-    public abstract ModelNodeInternal addLink(ModelNodeInternal node);
-
-    @Override
-    public <T> ModelView<? extends T> asReadOnly(ModelType<T> type, @Nullable ModelRuleDescriptor ruleDescriptor) {
-        ModelView<? extends T> modelView = getAdapter().asReadOnly(type, this, ruleDescriptor);
-        if (modelView == null) {
-            throw new IllegalStateException("Model node " + getPath() + " cannot be expressed as a read-only view of type " + type);
-        }
-        return modelView;
-    }
-
-    @Override
-    public <T> ModelView<? extends T> asWritable(ModelType<T> type, ModelRuleDescriptor ruleDescriptor, List<ModelView<?>> inputs) {
-        ModelView<? extends T> modelView = getAdapter().asWritable(type, this, ruleDescriptor, inputs);
-        if (modelView == null) {
-            throw new IllegalStateException("Model node " + getPath() + " cannot be expressed as a mutable view of type " + type);
-        }
-        return modelView;
-    }
 
     public void reset() {
         if (getState() != State.Known) {
@@ -224,5 +171,40 @@ abstract class ModelNodeInternal implements MutableModelNode {
                 child.reset();
             }
         }
+    }
+
+    @Override
+    public Optional<String> getValueDescription() {
+        this.ensureUsable();
+        return getAdapter().getValueDescription(this);
+    }
+
+    @Override
+    public Optional<String> getTypeDescription() {
+        this.ensureUsable();
+        ModelView<?> modelView = getAdapter().asReadOnly(ModelType.untyped(), this, null);
+        if (modelView != null) {
+            ModelType<?> type = modelView.getType();
+            if (type != null) {
+                return Optional.of(type.toString());
+            }
+            modelView.close();
+        }
+        return Optional.absent();
+    }
+
+    @Override
+    public List<ModelRuleDescriptor> getExecutedRules() {
+        return this.executedRules;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        return this == obj;
+    }
+
+    @Override
+    public int hashCode() {
+        return super.hashCode();
     }
 }

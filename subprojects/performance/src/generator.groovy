@@ -7,6 +7,7 @@ import java.text.SimpleDateFormat
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
+import java.util.zip.Deflater
 
 class TestProject {
     final String name
@@ -16,10 +17,12 @@ class TestProject {
     Integer linesOfCodePerSourceFile
     List<MavenModule> dependencies
     MavenRepository repository;
+    Integer subprojectNumber
 
-    TestProject(String name, Object defaults) {
+    TestProject(String name, Object defaults, Integer subprojectNumber = null) {
         this.name = name
         this.defaults = defaults
+        this.subprojectNumber = subprojectNumber
     }
 
     int getSourceFiles() {
@@ -38,12 +41,18 @@ class TestProject {
 class ProjectGeneratorTask extends DefaultTask {
     @OutputDirectory
     File destDir
+
     boolean groovyProject
     boolean scalaProject
+    boolean nativeProject
     int sourceFiles = 1
     Integer testSourceFiles
     int linesOfCodePerSourceFile = 5
-    @InputFiles FileCollection testDependencies
+    int filesPerPackage = 100
+    boolean useSubProjectNumberInSourceFileNames = false
+
+    @InputFiles
+    FileCollection testDependencies
 
     final List<TestProject> projects = []
     List<String> rootProjectTemplates = ['root-project']
@@ -54,6 +63,11 @@ class ProjectGeneratorTask extends DefaultTask {
     Map<String, Object> templateArgs = [:]
 
     final DependencyGraph dependencyGraph = new DependencyGraph()
+    int numberOfExternalDependencies = 0
+
+    MavenJarCreator mavenJarCreator = new MavenJarCreator()
+
+    Random random = new Random(1L)
 
     def ProjectGeneratorTask() {
         outputs.upToDateWhen { false }
@@ -70,10 +84,14 @@ class ProjectGeneratorTask extends DefaultTask {
             projects.subList(projectCount, projects.size()).clear()
         } else {
             while (projects.size() < projectCount) {
-                def project = projects.empty ? new TestProject("root", this) : new TestProject("project${projects.size()}", this)
+                def project = projects.empty ? new TestProject("root", this) : new TestProject("project${projects.size()}", this, projects.size())
                 projects << project
             }
         }
+    }
+
+    int getProjectCount() {
+        projects.size()
     }
 
     void dependencyGraph(Closure configClosure) {
@@ -89,12 +107,22 @@ class ProjectGeneratorTask extends DefaultTask {
 
         MavenRepository repo = generateDependencyRepository()
         generateRootProject()
-        subprojects.each {
-            if(repo){
-                it.setRepository(repo)
-                it.setDependencies(repo.getDependenciesOfTransitiveLevel(1))
+        subprojects.each { subproject ->
+            if (repo) {
+                subproject.setRepository(repo)
+                pickExternalDependencies(repo, subproject)
             }
-            generateSubProject(it)
+            generateSubProject(subproject)
+        }
+    }
+
+    void pickExternalDependencies(repo, subproject) {
+        if (numberOfExternalDependencies > 0) {
+            def dependencies = [] + repo.modules
+            Collections.shuffle(dependencies, random)
+            subproject.setDependencies(dependencies.take(numberOfExternalDependencies))
+        } else {
+            subproject.setDependencies(repo.getDependenciesOfTransitiveLevel(1))
         }
     }
 
@@ -106,11 +134,12 @@ class ProjectGeneratorTask extends DefaultTask {
         return projects[0]
     }
 
-    MavenRepository generateDependencyRepository(){
+    MavenRepository generateDependencyRepository() {
         MavenRepository repo = new RepositoryBuilder(getDestDir())
                 .withArtifacts(dependencyGraph.size)
                 .withDepth(dependencyGraph.depth)
                 .withSnapshotVersions(dependencyGraph.useSnapshotVersions)
+                .withMavenJarCreator(mavenJarCreator)
                 .create()
         return repo;
     }
@@ -120,18 +149,21 @@ class ProjectGeneratorTask extends DefaultTask {
     }
 
     def generateRootProject() {
-        def templates = subprojectNames.empty ? subProjectTemplates : rootProjectTemplates
+        def templates = [] + (subprojectNames.empty ? subProjectTemplates : rootProjectTemplates)
         if (!templates.empty) {
-            templates << 'heap-capture'
+            templates.addAll(['build-event-timestamps', 'heap-capture'])
         }
         generateProject rootProject, subprojects: subprojectNames, projectDir: destDir,
-                files: subprojectNames.empty ? [] : ['settings.gradle'],
+                files: subprojectNames.empty ? [] : ['settings.gradle', 'checkstyle.xml'],
                 templates: templates,
                 includeSource: subprojectNames.empty
 
         project.copy {
-            from testDependencies
-            into new File(getDestDir(), 'lib/test')
+            from "src/templates/init.gradle"
+            into(getDestDir())
+            into('lib/test') {
+                from testDependencies
+            }
         }
     }
 
@@ -142,83 +174,111 @@ class ProjectGeneratorTask extends DefaultTask {
 
     def generateProject(Map args, TestProject testProject) {
         File projectDir = args.projectDir
-        List<String> templates = args.templates
         logger.lifecycle "Generating test project '$testProject.name' into $projectDir"
 
         def files = []
         files.addAll(args.files)
         files.addAll(['build.gradle', 'pom.xml', 'build.xml'])
 
-        Closure generate = { String name, String templateName, Map templateArgs ->
-            File destFile = new File(projectDir, name)
-            File baseFile = project.file("src/templates/$templateName")
-
-            List<File> templateFiles = []
-            if (baseFile.exists()) {
-                templateFiles << baseFile
-            }
-            templateFiles.addAll templates.collect { project.file("src/templates/$it/$templateName") }.findAll { it.exists() }
-            if (templateFiles.empty) {
-                return
-            }
-            templateFiles.subList(0, templateFiles.size() - 1).each {
-                def writer = new StringWriter()
-                getTemplate(it).make(templateArgs).writeTo(writer)
-                templateArgs.original = writer.toString()
-            }
-
-            destFile.parentFile.mkdirs()
-            destFile.withWriter { Writer writer ->
-                getTemplate(templateFiles.last()).make(templateArgs).writeTo(writer)
-            }
-        }
-
-        args += [projectName: testProject.name, groovyProject: groovyProject, scalaProject: scalaProject,
-                propertyCount: (testProject.linesOfCodePerSourceFile.intdiv(7)), repository: testProject.repository, dependencies:testProject.dependencies,
-                testProject: testProject
-                ]
+        args += [projectName  : testProject.name, subprojectNumber: testProject.subprojectNumber, groovyProject: groovyProject, scalaProject: scalaProject,
+                 propertyCount: (testProject.linesOfCodePerSourceFile.intdiv(7)), repository: testProject.repository, dependencies: testProject.dependencies,
+                 testProject  : testProject
+        ]
 
         args += templateArgs
 
-        files.each {String name ->
-            generate(name, name, args)
+        files.each { String name ->
+            generateWithTemplate(projectDir, name, name, args)
         }
 
         if (args.includeSource) {
-            testProject.sourceFiles.times {
-                String packageName = "org.gradle.test.performance${(int) (it / 100) + 1}"
-                Map classArgs = args + [packageName: packageName, productionClassName: "Production${it + 1}"]
-                generate("src/main/java/${packageName.replace('.', '/')}/${classArgs.productionClassName}.java", 'Production.java', classArgs)
-            }
-            testProject.testSourceFiles.times {
-                String packageName = "org.gradle.test.performance${(int) (it / 100) + 1}"
-                Map classArgs = args + [packageName: packageName, productionClassName: "Production${it + 1}", testClassName: "Test${it + 1}"]
-                generate("src/test/java/${packageName.replace('.', '/')}/${classArgs.testClassName}.java", 'Test.java', classArgs)
-            }
-            if (groovyProject) {
-                testProject.sourceFiles.times {
-                    String packageName = "org.gradle.test.performance${(int) (it / 100) + 1}"
-                    Map classArgs = args + [packageName: packageName, productionClassName: "ProductionGroovy${it + 1}"]
-                    generate("src/main/groovy/${packageName.replace('.', '/')}/${classArgs.productionClassName}.groovy", 'Production.groovy', classArgs)
+            if (nativeProject) {
+                generateNativeProjectSource(projectDir, testProject, args)
+            } else {
+                generateJvmProjectSource(projectDir, "java", testProject, args)
+                if (groovyProject) {
+                    generateJvmProjectSource(projectDir, "groovy", testProject, args)
                 }
-                testProject.testSourceFiles.times {
-                    String packageName = "org.gradle.test.performance${(int) (it / 100) + 1}"
-                    Map classArgs = args + [packageName: packageName, productionClassName: "ProductionGroovy${it + 1}", testClassName: "TestGroovy${it + 1}"]
-                    generate("src/test/groovy/${packageName.replace('.', '/')}/${classArgs.testClassName}.groovy", 'Test.groovy', classArgs)
+                if (scalaProject) {
+                    generateJvmProjectSource(projectDir, "scala", testProject, args)
                 }
             }
-            if (scalaProject) {
-                testProject.sourceFiles.times {
-                    String packageName = "org.gradle.test.performance${(int) (it / 100) + 1}"
-                    Map classArgs = args + [packageName: packageName, productionClassName: "ProductionScala${it + 1}"]
-                    generate("src/main/scala/${packageName.replace('.', '/')}/${classArgs.productionClassName}.scala", 'Production.scala', classArgs)
-                }
-                testProject.testSourceFiles.times {
-                    String packageName = "org.gradle.test.performance${(int) (it / 100) + 1}"
-                    Map classArgs = args + [packageName: packageName, productionClassName: "ProductionScala${it + 1}", testClassName: "TestScala${it + 1}"]
-                    generate("src/test/scala/${packageName.replace('.', '/')}/${classArgs.testClassName}.scala", 'Test.scala', classArgs)
-                }
+        }
+    }
+
+    void generateWithTemplate(File projectDir, String name, String templateName, Map templateArgs) {
+        File destFile = new File(projectDir, name)
+        File baseFile = project.file("src/templates/$templateName")
+
+        List<File> templateFiles = []
+        if (baseFile.exists()) {
+            templateFiles << baseFile
+        }
+        List<String> templates = templateArgs.templates
+        templateFiles.addAll templates.collect { project.file("src/templates/$it/$templateName") }.findAll { it.exists() }
+        if (templateFiles.empty) {
+            return
+        }
+        templateFiles.subList(0, templateFiles.size() - 1).each {
+            def writer = new StringWriter()
+            getTemplate(it).make(templateArgs).writeTo(writer)
+            templateArgs.original = writer.toString()
+        }
+
+        destFile.parentFile.mkdirs()
+        destFile.withWriter { Writer writer ->
+            getTemplate(templateFiles.last()).make(templateArgs).writeTo(writer)
+        }
+    }
+
+    void generateNativeProjectSource(File projectDir, TestProject testProject, Map args) {
+        args.moduleCount.times { m ->
+            Map classArgs = args + [componentName: "lib${m + 1}"]
+            generateWithTemplate(projectDir, "src/${classArgs.componentName}/headers/pch.h", 'pch.h', classArgs)
+        }
+        testProject.sourceFiles.times { s ->
+            args.moduleCount.times { m ->
+                Map classArgs = args + [componentName: "lib${m + 1}", functionName: "lib${s + 1}"]
+                generateWithTemplate(projectDir, "src/${classArgs.componentName}/c/${classArgs.functionName}.c", 'lib.c', classArgs)
             }
+        }
+    }
+
+    void generateJvmProjectSource(File projectDir, String sourceLang, TestProject testProject, Map args) {
+        def classFilePrefix
+        def classFileTemplate
+        def testFilePrefix
+        def testFileTemplate
+
+        if (sourceLang == "groovy") {
+            classFilePrefix = "ProductionGroovy"
+            classFileTemplate = "Production.groovy"
+            testFilePrefix = "TestGroovy"
+            testFileTemplate = "Test.groovy"
+        } else if (sourceLang == "scala") {
+            classFilePrefix = "ProductionScala"
+            classFileTemplate = "Production.scala"
+            testFilePrefix = "TestScala"
+            testFileTemplate = "Test.scala"
+        } else {
+            classFilePrefix = "Production"
+            classFileTemplate = "Production.java"
+            testFilePrefix = "Test"
+            testFileTemplate = "Test.java"
+        }
+
+        def createPackageName = { fileNumber -> "org.gradle.test.performance${useSubProjectNumberInSourceFileNames ? "${testProject.subprojectNumber}_" : ''}${(int) (fileNumber / filesPerPackage) + 1}".toString() }
+        def createFileName = { prefix, fileNumber -> "${prefix}${useSubProjectNumberInSourceFileNames ? "${testProject.subprojectNumber}_" : ''}${fileNumber + 1}".toString() }
+
+        testProject.sourceFiles.times {
+            String packageName = createPackageName(it)
+            Map classArgs = args + [packageName: packageName, productionClassName: createFileName(classFilePrefix, it)]
+            generateWithTemplate(projectDir, "src/main/${sourceLang}/${packageName.replace('.', '/')}/${classArgs.productionClassName}.${sourceLang}", classFileTemplate, classArgs)
+        }
+        testProject.testSourceFiles.times {
+            String packageName = createPackageName(it)
+            Map classArgs = args + [packageName: packageName, productionClassName: createFileName(classFilePrefix, it), testClassName: createFileName(testFilePrefix, it)]
+            generateWithTemplate(projectDir, "src/test/${sourceLang}/${packageName.replace('.', '/')}/${classArgs.testClassName}.${sourceLang}", testFileTemplate, classArgs)
         }
     }
 
@@ -243,8 +303,9 @@ class DependencyGraph {
     int size = 0
     int depth = 1
     boolean useSnapshotVersions = false
-    boolean isEmpty(){
-        size==0
+
+    boolean isEmpty() {
+        size == 0
     }
 }
 
@@ -252,6 +313,7 @@ class MavenRepository {
     int depth = 1
     final File rootDir
     List<MavenModule> modules = []
+    MavenJarCreator mavenJarCreator = new MavenJarCreator()
 
     MavenRepository(File rootDir) {
         println rootDir
@@ -264,19 +326,20 @@ class MavenRepository {
 
     MavenModule addModule(String groupId, String artifactId, Object version = '1.0') {
         def artifactDir = new File(rootDir, "${groupId.replace('.', '/')}/$artifactId/$version")
-        def module = new MavenModule(artifactDir, groupId, artifactId, version as String);
+        def module = new MavenModule(artifactDir, groupId, artifactId, version as String)
+        module.mavenJarCreator = mavenJarCreator
         modules << module
         return module
     }
 
-    void publish(){
-        modules.each{
+    void publish() {
+        modules.each {
             it.publish()
         }
     }
 
-    List<MavenModule> getDependenciesOfTransitiveLevel(int level){
-        return modules.findAll{((int)(it.artifactId - "artifact").toInteger() % depth) == level - 1 }
+    List<MavenModule> getDependenciesOfTransitiveLevel(int level) {
+        return modules.findAll { ((int) (it.artifactId - "artifact").toInteger() % depth) == level - 1 }
     }
 }
 
@@ -293,6 +356,7 @@ class MavenModule {
     final timestampFormat = new SimpleDateFormat("yyyyMMdd.HHmmss")
     private final List artifacts = []
     private boolean uniqueSnapshots = true;
+    MavenJarCreator mavenJarCreator
 
     MavenModule(File moduleDir, String groupId, String artifactId, String version) {
         this.moduleDir = moduleDir
@@ -311,7 +375,7 @@ class MavenModule {
         return this
     }
 
-    String shortNotation(){
+    String shortNotation() {
         return "$groupId:$artifactId:$version"
     }
 
@@ -398,25 +462,7 @@ class MavenModule {
     }
 
     void createEmptyJar(File artifactFile) {
-        String content = "testcontent"
-        try {
-            FileOutputStream stream = new FileOutputStream(artifactFile);
-            JarOutputStream out = new JarOutputStream(stream, new Manifest());
-
-            // Add archive entry
-            JarEntry jarAdd = new JarEntry(artifactFile.name + ".properties");
-            jarAdd.setTime(System.currentTimeMillis());
-            out.putNextEntry(jarAdd);
-
-            // Write file to archive
-            out.write(content.getBytes("utf-8"), 0, content.getBytes("utf-8").length);
-
-            out.close();
-            stream.close();
-        } catch (Exception ex) {
-            ex.printStackTrace();
-            System.out.println("Error: " + ex.getMessage());
-        }
+        mavenJarCreator.createJar(this, artifactFile)
     }
 
     private File publishArtifact(Map<String, ?> artifact) {
@@ -458,6 +504,60 @@ class MavenPom {
     }
 }
 
+class MavenJarCreator {
+    int minimumSizeKB = 0
+    int maximumSizeKB = 0
+    Random random = new Random(1L)
+    byte[] charsToUse = "abcdefghijklmnopqrstuvwxyz0123456789".getBytes()
+
+    void createJar(MavenModule mavenModule, File artifactFile) {
+        try {
+            artifactFile.withOutputStream { stream ->
+                JarOutputStream out = new JarOutputStream(stream, new Manifest());
+                out.setLevel(Deflater.NO_COMPRESSION)
+                try {
+                    addJarEntry(out, artifactFile.name + ".properties", "testcontent")
+                    if (minimumSizeKB > 0) {
+                        int sizeInBytes
+                        if(maximumSizeKB > minimumSizeKB) {
+                            sizeInBytes = (minimumSizeKB + random.nextInt(maximumSizeKB - minimumSizeKB)) * 1024
+                        } else {
+                            sizeInBytes = minimumSizeKB * 1024
+                        }
+                        addGeneratedUncompressedJarEntry(out, "generated.txt", sizeInBytes)
+                    }
+                } finally {
+                    out.close()
+                }
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace()
+            System.out.println("Error: " + ex.getMessage())
+        }
+    }
+
+    private void addJarEntry(JarOutputStream out, String name, String content) {
+        // Add archive entry
+        JarEntry entry = new JarEntry(name)
+        entry.setTime(System.currentTimeMillis())
+        out.putNextEntry(entry)
+
+        // Write file to archive
+        def contentBytes = content.getBytes("utf-8")
+        out.write(contentBytes, 0, contentBytes.length)
+    }
+
+    private void addGeneratedUncompressedJarEntry(JarOutputStream out, String name, int sizeInBytes) {
+        JarEntry entry = new JarEntry(name)
+        entry.setTime(System.currentTimeMillis())
+        out.putNextEntry(entry)
+
+        for (int i = 0; i < sizeInBytes; i++) {
+            out.write(charsToUse, i % charsToUse.length, 1)
+        }
+    }
+}
+
 class MavenScope {
     final dependencies = []
 
@@ -471,6 +571,7 @@ class RepositoryBuilder {
     private int numberOfArtifacts = 0
     private File targetDir
     boolean withSnapshotVersions = false
+    private MavenJarCreator mavenJarCreator = new MavenJarCreator()
 
     public RepositoryBuilder(File targetDir) {
         this.targetDir = targetDir;
@@ -491,16 +592,22 @@ class RepositoryBuilder {
         return this;
     }
 
+    RepositoryBuilder withMavenJarCreator(MavenJarCreator mavenJarCreator) {
+        this.mavenJarCreator = mavenJarCreator
+        this
+    }
+
     MavenRepository create() {
-        if(numberOfArtifacts==0){
+        if (numberOfArtifacts == 0) {
             return null;
         }
         targetDir.mkdirs();
         MavenRepository repo = new MavenRepository(new File(targetDir, "mavenRepo"))
+        repo.mavenJarCreator = mavenJarCreator
         numberOfArtifacts.times {
-            if(withSnapshotVersions){
+            if (withSnapshotVersions) {
                 repo.addModule('group', "artifact$it", "1.0-SNAPSHOT")
-            }else{
+            } else {
                 repo.addModule('group', "artifact$it")
             }
         }
@@ -513,7 +620,7 @@ class RepositoryBuilder {
 
     void transformGraphToDepth(List<MavenModule> modules, int depth) {
         def depGroups = modules.groupBy { (int) (it.artifactId - "artifact").toInteger() / depth }
-        depGroups.each {idx, groupModules ->
+        depGroups.each { idx, groupModules ->
             for (int i = 0; i < groupModules.size() - 1; i++) {
                 def next = groupModules[i + 1]
                 groupModules[i].dependsOn(next.groupId, next.artifactId, next.version)

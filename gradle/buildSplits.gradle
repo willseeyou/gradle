@@ -1,0 +1,71 @@
+/*
+ * Copyright 2015 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+def buckets = [
+    "1": [":platformPlay", ":scala", ":languageScala", ":buildComparison",
+        ":ivy", ":platformBase", ":jacoco", ":announce", ":internalIntegTesting",
+        ":diagnostics", ":jetty", ":cli", ":reporting", ":toolingApiBuilders", ":openApi"],
+
+    "2": [":toolingApi", ":dependencyManagement", ":testKit", ":distributions",
+        ":pluginUse", ":sonar", ":jacoco", ":buildInit", ":languageGroovy", ":internalTesting",
+        ":languageJvm", ":performance", ":publish", ":resources", ":baseServicesGroovy", ":resourcesHttp",
+        ":pluginDevelopment", ":osgi"],
+
+    "3": [":launcher", ":plugins", ":codeQuality", ":languageJava",
+        ":ui", ":maven", ":javascript", ":antlr", ":messaging", ":ear",
+        ":resourcesS3", ":wrapper", ":resourcesSftp", ":signing", ":modelGroovy", ":baseServices"],
+
+    "4": [":docs", ":integTest", ":core", ":languageNative", ":ide", ":platformNative", ":modelCore", ":testingNative",
+        ":ideNative", ":native"]
+]
+
+//Make sure all projects are accounted for
+def coveredProjects = (buckets.collect { it.value }).flatten()
+assert coveredProjects.size() == subprojects.size(): "The following projects should be added to a bucket: ${subprojects.collect { ":${it.name}" } - coveredProjects}"
+
+//Create appropriate build types for each bucket
+buildTypes.toArray().each { buildType ->
+    buckets.each { String bucketName, List<String> projects ->
+        def projectTasks = tasksForProjects(buildType, projects)
+        buildTypes.create("${buildType.name + bucketName}") {
+            tasks projectTasks as String[]
+            projectProperties buildType.projectProperties
+        }
+    }
+}
+
+def tasksForProjects(buildType, List<String> projects) {
+    List tasks = []
+    projects.each { String p ->
+        buildType.tasks.each { String t ->
+            String task = resolveTask(t)
+            if (!task.contains(':')) {
+                tasks << "$p:${task}"
+            } else {
+                tasks << task
+            }
+        }
+    }
+    return tasks
+}
+
+def String resolveTask(String task) {
+    if (testGroupings.containsKey(task)) {
+        return testGroupings[task]
+    } else {
+        return task
+    }
+}

@@ -25,61 +25,25 @@ import spock.lang.Specification
 
 class ConsumerOperationParametersTest extends Specification {
 
-    def "null or empty arguments have the same meaning"() {
-        def params = ConsumerOperationParameters.builder()
-        when:
-        params.arguments = null
+    def builder = ConsumerOperationParameters.builder().setEntryPoint("entry-point")
 
-        then:
-        params.build().arguments == null
-
-        when:
-        params.arguments = []
-
-        then:
-        params.build().arguments == null
+    def "can build consumer operation parameters for provided properties"() {
+        given:
+        def tasks = ['a', 'b']
+        def classpath = [new URI('file:///Users/foo/bar/test.jar'), new URI('file:///Users/foo/bar/resources')]
 
         when:
-        params.arguments = ['-Dfoo']
-
-        then:
-        params.build().arguments == ['-Dfoo']
-    }
-
-    def "null or empty jvm arguments have the same meaning"() {
-        def params = ConsumerOperationParameters.builder()
-        when:
-        params.jvmArguments = null
-
-        then:
-        params.build().jvmArguments == null
-
-        when:
-        params.jvmArguments = []
-
-        then:
-        params.build().jvmArguments == null
-
-        when:
-        params.jvmArguments = ['-Xmx']
-
-        then:
-        params.build().jvmArguments == ['-Xmx']
-    }
-
-    def "task names and empty launchables"() {
-        def builder = ConsumerOperationParameters.builder()
-        when:
-        builder.tasks = ['a', 'b']
+        builder.tasks = tasks
+        builder.classpath = classpath
         def params = builder.build()
 
         then:
-        params.tasks == ['a', 'b']
+        params.tasks == tasks
+        params.classpath == classpath
         params.launchables == null
     }
 
     def "launchables from provider"() {
-        def builder = ConsumerOperationParameters.builder()
         when:
         def launchable1 = Mock(InternalLaunchable)
         def launchable2 = Mock(InternalLaunchable)
@@ -92,7 +56,6 @@ class ConsumerOperationParametersTest extends Specification {
     }
 
     def "launchables from adapters"() {
-        def builder = ConsumerOperationParameters.builder()
         when:
         def launchable1 = Mock(TaskListingLaunchable)
         def paths1 = Sets.newTreeSet()

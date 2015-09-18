@@ -16,7 +16,6 @@
 
 package org.gradle.performance.fixture
 
-import org.gradle.integtests.fixtures.executer.GradleExecuter
 import org.gradle.performance.measure.DataAmount
 import org.gradle.performance.measure.MeasuredOperation
 import org.gradle.test.fixtures.file.TestNameTestDirectoryProvider
@@ -35,12 +34,12 @@ class GCLoggingCollectorTest extends Specification {
 
     @Unroll
     def "parses GC Log #logName with locale #locale"() {
-        def operation = new MeasuredOperation(start: DateTime.parse("2015-01-22T$startTime+0000"), end: DateTime.parse("2015-01-22T$endTime+0000"))
+        def operation = new MeasuredOperation(start: DateTime.parse("2015-01-22T$startTime"), end: DateTime.parse("2015-01-22T$endTime"))
         def projectDir = tmpDir.createDir("project")
         resources.getResource(logName).copyTo(projectDir.file("gc.txt"))
 
         when:
-        collector.beforeExecute(projectDir, Stub(GradleExecuter))
+        collector.getAdditionalJvmOpts(projectDir)
         collector.collect(operation, locale)
 
         then:

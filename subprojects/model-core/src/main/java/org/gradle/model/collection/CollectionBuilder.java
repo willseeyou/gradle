@@ -17,18 +17,20 @@
 package org.gradle.model.collection;
 
 import org.gradle.api.Action;
-import org.gradle.api.Incubating;
 import org.gradle.api.Nullable;
 import org.gradle.model.RuleSource;
 
+import java.util.Collection;
 import java.util.Set;
 
 /**
  * Allows the adding of items to a named collection where instantiation is managed.
  *
  * @param <T> the contract type for all items
+ *
+ * @deprecated use {@link org.gradle.model.ModelMap} instead
  */
-@Incubating
+@Deprecated
 public interface CollectionBuilder<T> {
     /**
      * Returns a collection containing the items from this collection which are of the specified type.
@@ -199,6 +201,14 @@ public interface CollectionBuilder<T> {
     <S> void withType(Class<S> type, Action<? super S> configAction);
 
     /**
+     * Applies the given rules to all items of the collection of the given type.
+     *
+     * @param type the type that the item must be/implement to have the rules applied
+     * @param rules rules to apply
+     */
+    <S> void withType(Class<S> type, Class<? extends RuleSource> rules);
+
+    /**
      * Applies the given action to each item in the collection, as each item is required.
      *
      * <p>The given action is invoked to configure the item when the item is required. It is called after any actions provided to {@link #beforeEach(org.gradle.api.Action)}, {@link #create(String,
@@ -218,4 +228,11 @@ public interface CollectionBuilder<T> {
      * @param configAction An action that configures the item. The action is executed when the item is required.
      */
     <S> void afterEach(Class<S> type, Action<? super S> configAction);
+
+    /**
+     * Returns the items in this collection.
+     *
+     * @return The items.
+     */
+    Collection<T> values();
 }

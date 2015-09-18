@@ -18,10 +18,9 @@ package org.gradle.api.plugins.antlr;
 
 import org.gradle.api.Action;
 import org.gradle.api.file.FileCollection;
-import org.gradle.api.plugins.antlr.internal.AntlrResult;
-import org.gradle.api.plugins.antlr.internal.AntlrSourceGenerationException;
-import org.gradle.api.plugins.antlr.internal.AntlrSpec;
-import org.gradle.api.plugins.antlr.internal.AntlrWorkerManager;
+import org.gradle.api.file.FileTree;
+import org.gradle.api.file.SourceDirectorySet;
+import org.gradle.api.plugins.antlr.internal.*;
 import org.gradle.api.tasks.*;
 import org.gradle.api.tasks.incremental.IncrementalTaskInputs;
 import org.gradle.api.tasks.incremental.InputFileDetails;
@@ -52,6 +51,7 @@ public class AntlrTask extends SourceTask {
 
     private File outputDirectory;
     private String maxHeapSize;
+    private SourceDirectorySet sourceDirectorySet;
 
     /**
      * Specifies that all rules call {@code traceIn}/{@code traceOut}.
@@ -114,6 +114,12 @@ public class AntlrTask extends SourceTask {
         }
     }
 
+
+    /**
+     * List of command-line arguments passed to the antlr process
+     *
+     * @return The antlr command-line arguments
+     */
     @Input
     public List<String> getArguments() {
         return arguments;
@@ -168,17 +174,17 @@ public class AntlrTask extends SourceTask {
         final Set<File> sourceFiles = getSource().getFiles();
         final AtomicBoolean cleanRebuild = new AtomicBoolean();
         inputs.outOfDate(
-                new Action<InputFileDetails>() {
-                    public void execute(InputFileDetails details) {
-                        File input = details.getFile();
-                        if (sourceFiles.contains(input)) {
-                            grammarFiles.add(input);
-                        }else {
-                            // classpath change?
-                            cleanRebuild.set(true);
-                        }
+            new Action<InputFileDetails>() {
+                public void execute(InputFileDetails details) {
+                    File input = details.getFile();
+                    if (sourceFiles.contains(input)) {
+                        grammarFiles.add(input);
+                    } else {
+                        // classpath change?
+                        cleanRebuild.set(true);
                     }
                 }
+            }
         );
         inputs.removed(new Action<InputFileDetails>() {
             @Override
@@ -192,58 +198,53 @@ public class AntlrTask extends SourceTask {
             GFileUtils.cleanDirectory(outputDirectory);
             grammarFiles.addAll(sourceFiles);
         }
-        List<String> args = buildArguments(grammarFiles);
+
         AntlrWorkerManager manager = new AntlrWorkerManager();
-        AntlrSpec spec = new AntlrSpec(args, maxHeapSize);
+        AntlrSpec spec = new AntlrSpecFactory().create(this, grammarFiles, sourceDirectorySet);
         AntlrResult result = manager.runWorker(getProject().getProjectDir(), getWorkerProcessBuilderFactory(), getAntlrClasspath(), spec);
-        evaluateAntlrResult(result);
+        evaluate(result);
     }
 
-    public void evaluateAntlrResult(AntlrResult result) {
+    private void evaluate(AntlrResult result) {
         int errorCount = result.getErrorCount();
         if (errorCount == 1) {
             throw new AntlrSourceGenerationException("There was 1 error during grammar generation", result.getException());
         } else if (errorCount > 1) {
             throw new AntlrSourceGenerationException("There were "
-                    + errorCount
-                    + " errors during grammar generation", result.getException());
+                + errorCount
+                + " errors during grammar generation", result.getException());
         }
     }
 
     /**
-     * Finalizes the list of arguments that will be sent to the ANTLR tool.
+     * Sets the source for this task. Delegates to {@link SourceTask#setSource(Object)}.
+     *
+     * If the source is of type {@link SourceDirectorySet}, then the relative path of each source grammar files
+     * is used to determine the relative output path of the generated source
+     * If the source is not of type {@link SourceDirectorySet}, then the generated source files end up
+     * flattened in the specified output directory.
+     *
+     * @param source The source.
      */
-    List<String> buildArguments(Set<File> grammarFiles) {
-        List<String> args = new ArrayList<String>();    // List for finalized arguments
-
-        // Output file
-        args.add("-o");
-        args.add(outputDirectory.getAbsolutePath());
-
-        // Custom arguments
-        for (String argument : arguments) {
-            args.add(argument);
+    @Override
+    public void setSource(Object source) {
+        super.setSource(source);
+        if (source instanceof SourceDirectorySet) {
+            this.sourceDirectorySet = (SourceDirectorySet) source;
         }
-
-        // Add trace parameters, if they don't already exist
-        if (isTrace() && !arguments.contains("-trace")) {
-            args.add("-trace");
-        }
-        if (isTraceLexer() && !arguments.contains("-traceLexer")) {
-            args.add("-traceLexer");
-        }
-        if (isTraceParser() && !arguments.contains("-traceParser")) {
-            args.add("-traceParser");
-        }
-        if (isTraceTreeWalker() && !arguments.contains("-traceTreeWalker")) {
-            args.add("-traceTreeWalker");
-        }
-
-        // Files in source directory
-        for (File file : grammarFiles) {
-            args.add(file.getAbsolutePath());
-        }
-
-        return args;
     }
+
+    /**
+     * Returns the source for this task, after the include and exclude patterns have been applied. Ignores source files which do not exist.
+     *
+     * @return The source.
+     */
+    // This method is here as the Gradle DSL generation can't handle properties with setters and getters in different classes.
+    @InputFiles
+    @SkipWhenEmpty
+    public FileTree getSource() {
+        return super.getSource();
+    }
+
+
 }

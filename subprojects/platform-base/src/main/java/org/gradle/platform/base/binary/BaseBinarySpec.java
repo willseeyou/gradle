@@ -19,20 +19,26 @@ package org.gradle.platform.base.binary;
 import org.gradle.api.Action;
 import org.gradle.api.DomainObjectSet;
 import org.gradle.api.Incubating;
-import org.gradle.api.PolymorphicDomainObjectContainer;
 import org.gradle.api.internal.AbstractBuildableModelElement;
+import org.gradle.api.internal.DefaultDomainObjectSet;
+import org.gradle.api.internal.DefaultPolymorphicNamedEntityInstantiator;
 import org.gradle.api.internal.project.taskfactory.ITaskFactory;
+import org.gradle.api.internal.rules.NamedDomainObjectFactoryRegistry;
+import org.gradle.internal.Actions;
 import org.gradle.internal.reflect.Instantiator;
 import org.gradle.internal.reflect.ObjectInstantiationException;
-import org.gradle.language.base.FunctionalSourceSet;
 import org.gradle.language.base.LanguageSourceSet;
-import org.gradle.language.base.internal.LanguageSourceSetContainer;
+import org.gradle.model.ModelMap;
+import org.gradle.model.internal.core.DomainObjectCollectionBackedModelMap;
+import org.gradle.model.internal.core.ModelMapGroovyDecorator;
+import org.gradle.platform.base.BinarySpec;
 import org.gradle.platform.base.BinaryTasksCollection;
 import org.gradle.platform.base.ModelInstantiationException;
 import org.gradle.platform.base.internal.BinaryBuildAbility;
 import org.gradle.platform.base.internal.BinarySpecInternal;
-import org.gradle.platform.base.internal.ConfigurableBuildAbility;
 import org.gradle.platform.base.internal.DefaultBinaryTasksCollection;
+import org.gradle.platform.base.internal.FixedBuildAbility;
+import org.gradle.util.DeprecationLogger;
 
 /**
  * Base class for custom binary implementations.
@@ -43,27 +49,32 @@ import org.gradle.platform.base.internal.DefaultBinaryTasksCollection;
  *
  */
 @Incubating
+// Needs to be here instead of the specific methods, because Java 6 and 7 will throw warnings otherwise
+@SuppressWarnings("deprecation")
 public abstract class BaseBinarySpec extends AbstractBuildableModelElement implements BinarySpecInternal {
-    private final LanguageSourceSetContainer sourceSets = new LanguageSourceSetContainer();
+    private final NamedDomainObjectFactoryRegistry<LanguageSourceSet> entityInstantiator;
+    private final ModelMap<LanguageSourceSet> ownedSourceSets;
+    private final DomainObjectSet<LanguageSourceSet> inputSourceSets = new DefaultDomainObjectSet<LanguageSourceSet>(LanguageSourceSet.class);
 
     private static ThreadLocal<BinaryInfo> nextBinaryInfo = new ThreadLocal<BinaryInfo>();
     private final BinaryTasksCollection tasks;
 
     private final String name;
     private final String typeName;
+    private final Class<? extends BinarySpec> publicType;
 
-    private boolean buildable = true;
+    private boolean disabled;
 
-    public static <T extends BaseBinarySpec> T create(Class<T> type, String name, Instantiator instantiator, ITaskFactory taskFactory) {
-        if (type.equals(BaseBinarySpec.class)) {
+    public static <T extends BaseBinarySpec> T create(Class<? extends BinarySpec> publicType, Class<T> implementationType, String name, Instantiator instantiator, ITaskFactory taskFactory) {
+        if (implementationType.equals(BaseBinarySpec.class)) {
             throw new ModelInstantiationException("Cannot create instance of abstract class BaseBinarySpec.");
         }
-        nextBinaryInfo.set(new BinaryInfo(name, type.getSimpleName(), taskFactory, instantiator));
+        nextBinaryInfo.set(new BinaryInfo(name, publicType, implementationType, taskFactory, instantiator));
         try {
             try {
-                return instantiator.newInstance(type);
+                return instantiator.newInstance(implementationType);
             } catch (ObjectInstantiationException e) {
-                throw new ModelInstantiationException(String.format("Could not create binary of type %s", type.getSimpleName()), e.getCause());
+                throw new ModelInstantiationException(String.format("Could not create binary of type %s", implementationType.getSimpleName()), e.getCause());
             }
         } finally {
             nextBinaryInfo.set(null);
@@ -79,8 +90,22 @@ public abstract class BaseBinarySpec extends AbstractBuildableModelElement imple
             throw new ModelInstantiationException("Direct instantiation of a BaseBinarySpec is not permitted. Use a BinaryTypeBuilder instead.");
         }
         this.name = info.name;
-        this.typeName = info.typeName;
+        this.publicType = info.publicType;
+        this.typeName = info.implementationType.getSimpleName();
         this.tasks = info.instantiator.newInstance(DefaultBinaryTasksCollection.class, this, info.taskFactory);
+        DefaultPolymorphicNamedEntityInstantiator<LanguageSourceSet> entityInstantiator = new DefaultPolymorphicNamedEntityInstantiator<LanguageSourceSet>(LanguageSourceSet.class, "owned sources");
+        this.entityInstantiator = entityInstantiator;
+        this.ownedSourceSets = new DomainObjectCollectionBackedModelMap<LanguageSourceSet>(
+            LanguageSourceSet.class,
+            new DefaultDomainObjectSet<LanguageSourceSet>(LanguageSourceSet.class),
+            entityInstantiator,
+            new Namer(),
+            Actions.doNothing());
+    }
+
+    @Override
+    public Class<? extends BinarySpec> getPublicType() {
+        return publicType;
     }
 
     protected String getTypeName() {
@@ -97,36 +122,45 @@ public abstract class BaseBinarySpec extends AbstractBuildableModelElement imple
 
     @Override
     public void setBuildable(boolean buildable) {
-        this.buildable = buildable;
+        this.disabled = !buildable;
     }
 
-    public boolean isBuildable() {
+    public final boolean isBuildable() {
         return getBuildAbility().isBuildable();
     }
 
-    public FunctionalSourceSet getBinarySources() {
-        return sourceSets.getMainSources();
-    }
-
-    public void setBinarySources(FunctionalSourceSet sources) {
-        sourceSets.setMainSources(sources);
-    }
-
+    @Override
     public DomainObjectSet<LanguageSourceSet> getSource() {
-        return sourceSets.getSources();
+        DeprecationLogger.nagUserOfReplacedProperty("source", "inputs");
+        return getInputs();
     }
 
-    public void sources(Action<? super PolymorphicDomainObjectContainer<LanguageSourceSet>> action) {
-        action.execute(sourceSets.getMainSources());
+    public void sources(Action<? super ModelMap<LanguageSourceSet>> action) {
+        action.execute(getSources());
     }
 
-    // TODO:DAZ Remove this
-    public void source(Object source) {
-        sourceSets.source(source);
+    @Override
+    public NamedDomainObjectFactoryRegistry<LanguageSourceSet> getEntityInstantiator() {
+        return entityInstantiator;
+    }
+
+    @Override
+    public DomainObjectSet<LanguageSourceSet> getInputs() {
+        return inputSourceSets;
+    }
+
+    @Override
+    public ModelMap<LanguageSourceSet> getSources() {
+        return ModelMapGroovyDecorator.wrap(ownedSourceSets);
     }
 
     public BinaryTasksCollection getTasks() {
         return tasks;
+    }
+
+    @Override
+    public void tasks(Action<? super BinaryTasksCollection> action) {
+        action.execute(tasks);
     }
 
     public boolean isLegacyBinary() {
@@ -135,13 +169,15 @@ public abstract class BaseBinarySpec extends AbstractBuildableModelElement imple
 
     private static class BinaryInfo {
         private final String name;
-        private final String typeName;
+        private final Class<? extends BinarySpec> publicType;
+        private final Class<? extends BaseBinarySpec> implementationType;
         private final ITaskFactory taskFactory;
         private final Instantiator instantiator;
 
-        private BinaryInfo(String name, String typeName, ITaskFactory taskFactory, Instantiator instantiator) {
+        private BinaryInfo(String name, Class<? extends BinarySpec> publicType, Class<? extends BaseBinarySpec> implementationType, ITaskFactory taskFactory, Instantiator instantiator) {
             this.name = name;
-            this.typeName = typeName;
+            this.publicType = publicType;
+            this.implementationType = implementationType;
             this.taskFactory = taskFactory;
             this.instantiator = instantiator;
         }
@@ -153,9 +189,16 @@ public abstract class BaseBinarySpec extends AbstractBuildableModelElement imple
     }
 
     @Override
-    public BinaryBuildAbility getBuildAbility() {
+    public final BinaryBuildAbility getBuildAbility() {
+        if (disabled) {
+            return new FixedBuildAbility(false);
+        }
+        return getBinaryBuildAbility();
+    }
+
+    protected BinaryBuildAbility getBinaryBuildAbility() {
         // Default behavior is to always be buildable.  Binary implementations should define what
         // criteria make them buildable or not.
-        return new ConfigurableBuildAbility(buildable);
+        return new FixedBuildAbility(true);
     }
 }

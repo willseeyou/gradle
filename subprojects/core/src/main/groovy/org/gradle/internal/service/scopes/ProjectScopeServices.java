@@ -33,6 +33,7 @@ import org.gradle.api.internal.initialization.DefaultScriptHandlerFactory;
 import org.gradle.api.internal.initialization.ScriptHandlerFactory;
 import org.gradle.api.internal.plugins.*;
 import org.gradle.api.internal.project.DefaultAntBuilderFactory;
+import org.gradle.api.internal.project.DeferredProjectConfiguration;
 import org.gradle.api.internal.project.ProjectInternal;
 import org.gradle.api.internal.project.ant.AntLoggingAdapter;
 import org.gradle.api.internal.project.taskfactory.ITaskFactory;
@@ -51,7 +52,7 @@ import org.gradle.logging.LoggingManagerInternal;
 import org.gradle.model.internal.inspect.ModelRuleExtractor;
 import org.gradle.model.internal.inspect.ModelRuleSourceDetector;
 import org.gradle.model.internal.registry.ModelRegistry;
-import org.gradle.model.persist.ModelRegistryStore;
+import org.gradle.model.internal.persist.ModelRegistryStore;
 import org.gradle.process.internal.DefaultExecActionFactory;
 import org.gradle.process.internal.ExecActionFactory;
 import org.gradle.tooling.provider.model.ToolingModelBuilderRegistry;
@@ -80,7 +81,11 @@ public class ProjectScopeServices extends DefaultServiceRegistry {
     }
 
     protected PluginRegistry createPluginRegistry(PluginRegistry parentRegistry) {
-        return parentRegistry.createChild(project.getClassLoaderScope().createChild().lock());
+        return parentRegistry.createChild(project.getClassLoaderScope().createChild("plugins").lock());
+    }
+
+    protected DeferredProjectConfiguration createDeferredProjectConfiguration() {
+        return new DeferredProjectConfiguration(project);
     }
 
     protected FileResolver createFileResolver() {
@@ -158,11 +163,7 @@ public class ProjectScopeServices extends DefaultServiceRegistry {
     }
 
     protected DependencyMetaDataProvider createDependencyMetaDataProvider() {
-        return new DependencyMetaDataProvider() {
-            public ModuleInternal getModule() {
-                return new ProjectBackedModule(project);
-            }
-        };
+        return new ProjectBackedModuleMetaDataProvider();
     }
 
     protected ServiceRegistryFactory createServiceRegistryFactory(final ServiceRegistry services) {
@@ -178,5 +179,11 @@ public class ProjectScopeServices extends DefaultServiceRegistry {
 
     protected ComponentRegistry createComponentRegistry() {
         return new ComponentRegistry();
+    }
+
+    private class ProjectBackedModuleMetaDataProvider implements DependencyMetaDataProvider {
+        public ModuleInternal getModule() {
+            return new ProjectBackedModule(project);
+        }
     }
 }

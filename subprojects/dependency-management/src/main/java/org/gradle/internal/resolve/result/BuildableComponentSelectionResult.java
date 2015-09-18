@@ -16,11 +16,16 @@
 
 package org.gradle.internal.resolve.result;
 
+import org.gradle.api.Nullable;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
+import org.gradle.internal.resolve.ModuleVersionResolveException;
 
+/**
+ * The result of resolving some dynamic version selector to a particular component id.
+ */
 public interface BuildableComponentSelectionResult extends ResolveResult {
     static enum State {
-        Match, NoMatch, Unknown
+        Match, NoMatch, Failed, Unknown
     }
 
     /**
@@ -31,11 +36,20 @@ public interface BuildableComponentSelectionResult extends ResolveResult {
     ModuleComponentIdentifier getMatch();
 
     /**
+     * {@inheritDoc}
+     */
+    @Nullable
+    @Override
+    ModuleVersionResolveException getFailure();
+
+    /**
      * Marks the given module component identifier as matching.
      *
      * @param moduleComponentIdentifier Chosen module component identifier
      */
     void matches(ModuleComponentIdentifier moduleComponentIdentifier);
+
+    void failed(ModuleVersionResolveException failure);
 
     /**
      * Registers that there was no matching module component identifier.
@@ -46,4 +60,14 @@ public interface BuildableComponentSelectionResult extends ResolveResult {
      * Returns the reason for choosing the component.
      */
     State getState();
+
+    /**
+     * Adds a candidate version that did not match the provided selector.
+     */
+    void notMatched(String candidateVersion);
+
+    /**
+     * Adds a candidate version that matched the provided selector, but was rejected by some rule.
+     */
+    void rejected(String version);
 }

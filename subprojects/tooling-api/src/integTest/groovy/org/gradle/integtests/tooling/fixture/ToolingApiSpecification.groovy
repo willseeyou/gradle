@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 package org.gradle.integtests.tooling.fixture
+
+import groovy.transform.stc.ClosureParams
+import groovy.transform.stc.SimpleType
 import org.gradle.integtests.fixtures.executer.GradleDistribution
 import org.gradle.integtests.fixtures.executer.IntegrationTestBuildContext
 import org.gradle.integtests.fixtures.executer.UnderDevelopmentGradleDistribution
@@ -29,6 +32,7 @@ import org.junit.Rule
 import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 import spock.lang.Specification
+
 /**
  * A spec that executes tests against all compatible versions of tooling API consumer and testDirectoryProvider, including the current Gradle version under test.
  *
@@ -54,6 +58,8 @@ abstract class ToolingApiSpecification extends Specification {
     TestDistributionDirectoryProvider temporaryDistributionFolder = new TestDistributionDirectoryProvider();
     final ToolingApi toolingApi = new ToolingApi(targetDist, temporaryFolder)
 
+    final GradleVersion toolingApiVersion = GradleVersion.current() // works due to classloading arrangement by ToolingApiCompatibilitySuiteRunner
+
     @Rule
     public RuleChain chain = RuleChain.outerRule(temporaryFolder).around(temporaryDistributionFolder).around(toolingApi);
 
@@ -69,15 +75,15 @@ abstract class ToolingApiSpecification extends Specification {
         new ConnectorServices().reset()
     }
 
-    public void withConnector(@DelegatesTo(GradleConnector) Closure cl) {
+    public void withConnector(@DelegatesTo(GradleConnector) @ClosureParams(value = SimpleType, options = ["org.gradle.tooling.GradleConnector"]) Closure cl) {
         toolingApi.withConnector(cl)
     }
 
-    public <T> T withConnection(@DelegatesTo(ProjectConnection) Closure<T> cl) {
+    public <T> T withConnection(@DelegatesTo(ProjectConnection) @ClosureParams(value = SimpleType, options = ["org.gradle.tooling.ProjectConnection"]) Closure<T> cl) {
         toolingApi.withConnection(cl)
     }
 
-    public <T> T withConnection(GradleConnector connector, @DelegatesTo(ProjectConnection) Closure<T> cl) {
+    public <T> T withConnection(GradleConnector connector, @DelegatesTo(ProjectConnection) @ClosureParams(value = SimpleType, options = ["org.gradle.tooling.ProjectConnection"]) Closure<T> cl) {
         toolingApi.withConnection(connector, cl)
     }
 
@@ -174,6 +180,22 @@ abstract class ToolingApiSpecification extends Specification {
             return []
         }
         return rootProjectImplicitTasks
+    }
+
+    /**
+     * Returns the set of implicit tasks returned by GradleProject.getTasks()
+     *
+     * <p>Note that in some versions the handling of implicit tasks was broken, so this method may return a different value
+     * to {@link #getRootProjectImplicitTasks()}.
+     */
+    Set<String> getRootProjectImplicitTasksForGradleProjectModel() {
+        def targetVersion = GradleVersion.version(targetDist.version.baseVersion.version)
+        if (targetVersion == GradleVersion.version("1.6")) {
+            // Implicit tasks were ignored, and setupBuild was added as a regular task
+            return ['setupBuild']
+        }
+
+        targetVersion < GradleVersion.version("2.3") ? [] : rootProjectImplicitTasks
     }
 
 }

@@ -18,6 +18,7 @@ package org.gradle.internal.resolve.result
 
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.internal.component.external.model.DefaultModuleComponentIdentifier
+import org.gradle.internal.resolve.ModuleVersionResolveException
 import spock.lang.Specification
 
 import static org.gradle.internal.resolve.result.BuildableComponentSelectionResult.State.*
@@ -28,8 +29,19 @@ class DefaultBuildableComponentSelectionResultTest extends Specification {
     def "has no matching state by default"() {
         expect:
         result.state == Unknown
-        !result.match
         !result.hasResult()
+
+        when:
+        result.match
+
+        then:
+        thrown(IllegalStateException)
+
+        when:
+        result.failure
+
+        then:
+        thrown(IllegalStateException)
     }
 
     def "can mark matching"() {
@@ -41,8 +53,9 @@ class DefaultBuildableComponentSelectionResultTest extends Specification {
 
         then:
         result.state == Match
-        result.match == moduleComponentIdentifier
         result.hasResult()
+        result.match == moduleComponentIdentifier
+        result.failure == null
     }
 
     def "can mark no match"() {
@@ -52,7 +65,30 @@ class DefaultBuildableComponentSelectionResultTest extends Specification {
         then:
         result.state == NoMatch
         result.hasResult()
-        !result.match
+        result.failure == null
+
+        when:
+        result.match
+
+        then:
+        thrown(IllegalStateException)
     }
 
+    def "can mark failed"() {
+        def failure = new ModuleVersionResolveException(Stub(ModuleComponentIdentifier), "")
+
+        when:
+        result.failed(failure)
+
+        then:
+        result.state == Failed
+        result.hasResult()
+        result.failure == failure
+
+        when:
+        result.match
+
+        then:
+        thrown(IllegalStateException)
+    }
 }

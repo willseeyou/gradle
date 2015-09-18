@@ -16,29 +16,22 @@
 
 package org.gradle.internal.resource.transport.aws.s3;
 
-import org.apache.commons.io.IOUtils;
-import org.gradle.api.UncheckedIOException;
-import org.gradle.internal.Factory;
-import org.gradle.internal.hash.HashValue;
-import org.gradle.internal.resource.ExternalResource;
+import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.amazonaws.services.s3.model.S3Object;
+import org.gradle.internal.resource.local.LocalResource;
 import org.gradle.internal.resource.metadata.DefaultExternalResourceMetaData;
 import org.gradle.internal.resource.metadata.ExternalResourceMetaData;
-import org.gradle.internal.resource.transfer.ExternalResourceAccessor;
-import org.gradle.internal.resource.transfer.ExternalResourceLister;
-import org.gradle.internal.resource.transfer.ExternalResourceUploader;
-import org.jets3t.service.ServiceException;
-import org.jets3t.service.model.S3Object;
-import org.jets3t.service.model.StorageObject;
+import org.gradle.internal.resource.transfer.ExternalResourceConnector;
+import org.gradle.internal.resource.transfer.ExternalResourceReadResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.List;
 
-public class S3ResourceConnector implements ExternalResourceLister, ExternalResourceAccessor, ExternalResourceUploader {
+public class S3ResourceConnector implements ExternalResourceConnector {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(S3ResourceConnector.class);
     private final S3Client s3Client;
@@ -47,65 +40,43 @@ public class S3ResourceConnector implements ExternalResourceLister, ExternalReso
         this.s3Client = s3Client;
     }
 
-    public List<String> list(URI parent) throws IOException {
+    public List<String> list(URI parent) {
         LOGGER.debug("Listing parent resources: {}", parent);
-        List<String> list = s3Client.list(parent);
-        return list;
+        return s3Client.list(parent);
     }
 
-    public ExternalResource getResource(URI location) throws IOException {
+    public ExternalResourceReadResponse openResource(URI location) {
         LOGGER.debug("Attempting to get resource: {}", location);
-        try {
-            S3Object s3Object = s3Client.getResource(location);
-            if(s3Object== null) {
-                return null;
-            }
-            return new S3Resource(s3Object, location);
-        } catch (S3Exception s3x) {
-            throw new UncheckedIOException(s3x.getMessage(), s3x);
+        S3Object s3Object = s3Client.getResource(location);
+        if (s3Object == null) {
+            return null;
         }
+        return new S3Resource(s3Object, location);
     }
 
-    public HashValue getResourceSha1(URI location) {
-        try {
-            S3Object resource = s3Client.getResource(new URI(location.toString() + ".sha1"));
-            if(resource!= null) {
-                InputStream objectContent = resource.getDataInputStream();
-                String sha = IOUtils.toString(objectContent);
-                return HashValue.parse(sha);
-            }
-        } catch (ServiceException e) {
-            LOGGER.error("Could not get contents of resource sha", e);
-        } catch (IOException e) {
-            LOGGER.error("Could not get contents of resource sha", e);
-        } catch (URISyntaxException e) {
-            LOGGER.error("Could not create URI for sha resource", e);
-        }
-        return null;
-    }
-
-    public ExternalResourceMetaData getMetaData(URI location) throws IOException {
+    public ExternalResourceMetaData getMetaData(URI location) {
         LOGGER.debug("Attempting to get resource metadata: {}", location);
-        try {
-            StorageObject metaData = s3Client.getMetaData(location);
-            if(metaData == null) {
-                return null;
-            }
-            return new DefaultExternalResourceMetaData(location,
-                    metaData.getLastModifiedDate().getTime(),
-                    metaData.getContentLength(),
-                    metaData.getETag(),
-                    null); // Passing null for sha1 - TODO - consider using the etag which is an MD5 hash of the file (when less than 5Gb)
-
-        } catch (S3Exception s3x) {
-            throw new UncheckedIOException(s3x.getMessage(), s3x);
+        S3Object s3Object = s3Client.getMetaData(location);
+        if (s3Object == null) {
+            return null;
         }
+        ObjectMetadata objectMetadata = s3Object.getObjectMetadata();
+        return new DefaultExternalResourceMetaData(location,
+                objectMetadata.getLastModified().getTime(),
+                objectMetadata.getContentLength(),
+                objectMetadata.getContentType(),
+                objectMetadata.getETag(),
+                null); // Passing null for sha1 - TODO - consider using the etag which is an MD5 hash of the file (when less than 5Gb)
     }
 
-    public void upload(Factory<InputStream> sourceFactory, Long contentLength, URI destination) throws IOException {
+    @Override
+    public void upload(LocalResource resource, URI destination) throws IOException {
         LOGGER.debug("Attempting to upload stream to : {}", destination);
-        InputStream inputStream = sourceFactory.create();
-        s3Client.put(inputStream, contentLength, destination);
-        inputStream.close();
+        InputStream inputStream = resource.open();
+        try {
+            s3Client.put(inputStream, resource.getContentLength(), destination);
+        } finally {
+            inputStream.close();
+        }
     }
 }

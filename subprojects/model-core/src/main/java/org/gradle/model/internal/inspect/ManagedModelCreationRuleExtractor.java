@@ -23,6 +23,7 @@ import org.gradle.model.internal.core.*;
 import org.gradle.model.internal.core.rule.describe.ModelRuleDescriptor;
 import org.gradle.model.internal.manage.schema.ModelSchema;
 import org.gradle.model.internal.manage.schema.ModelSchemaStore;
+import org.gradle.model.internal.manage.schema.ModelValueSchema;
 import org.gradle.model.internal.manage.schema.extract.InvalidManagedModelElementTypeException;
 import org.gradle.model.internal.type.ModelType;
 
@@ -31,11 +32,11 @@ import java.util.List;
 @NotThreadSafe
 public class ManagedModelCreationRuleExtractor extends AbstractModelCreationRuleExtractor {
     private final ModelSchemaStore schemaStore;
-    private final ModelCreatorFactory modelCreatorFactory;
+    private final NodeInitializerRegistry nodeInitializerRegistry;
 
-    public ManagedModelCreationRuleExtractor(ModelSchemaStore schemaStore, ModelCreatorFactory modelCreatorFactory) {
+    public ManagedModelCreationRuleExtractor(ModelSchemaStore schemaStore, NodeInitializerRegistry nodeInitializerRegistry) {
         this.schemaStore = schemaStore;
-        this.modelCreatorFactory = modelCreatorFactory;
+        this.nodeInitializerRegistry = nodeInitializerRegistry;
     }
 
     public String getDescription() {
@@ -68,20 +69,28 @@ public class ManagedModelCreationRuleExtractor extends AbstractModelCreationRule
     private <T> ModelCreator buildModelCreatorForManagedType(ModelType<T> managedType, final MethodRuleDefinition<?, ?> ruleDefinition, ModelPath modelPath) {
         ModelSchema<T> modelSchema = getModelSchema(managedType, ruleDefinition);
 
-        if (modelSchema.getKind().equals(ModelSchema.Kind.VALUE)) {
+        if (modelSchema instanceof ModelValueSchema) {
             throw new InvalidModelRuleDeclarationException(ruleDefinition.getDescriptor(), "a void returning model element creation rule cannot take a value type as the first parameter, which is the element being created. Return the value from the method.");
         }
-
-        if (!modelSchema.getKind().isManaged()) {
-            String description = String.format("a void returning model element creation rule has to take an instance of a managed type as the first argument");
-            throw new InvalidModelRuleDeclarationException(ruleDefinition.getDescriptor(), description);
+        NodeInitializer nodeInitializer = null;
+        try {
+            nodeInitializer = nodeInitializerRegistry.getNodeInitializer(modelSchema);
+        } catch (ModelTypeInitializationException e) {
+            throw new InvalidModelRuleDeclarationException(ruleDefinition.getDescriptor(), e);
         }
 
         List<ModelReference<?>> bindings = ruleDefinition.getReferences();
         List<ModelReference<?>> inputs = bindings.subList(1, bindings.size());
         ModelRuleDescriptor descriptor = ruleDefinition.getDescriptor();
 
-        return modelCreatorFactory.creator(descriptor, modelPath, modelSchema, inputs, new RuleMethodBackedMutationAction<T>(ruleDefinition.getRuleInvoker()));
+        final ModelReference<T> reference = ModelReference.of(modelPath, managedType);
+        return ModelCreators.of(modelPath, nodeInitializer)
+            .descriptor(descriptor)
+            .action(ModelActionRole.Initialize, InputUsingModelAction.of(
+                    reference, descriptor, inputs, new RuleMethodBackedMutationAction<T>(ruleDefinition.getRuleInvoker())
+                )
+            )
+            .build();
     }
 
     private <T> ModelSchema<T> getModelSchema(ModelType<T> managedType, MethodRuleDefinition<?, ?> ruleDefinition) {

@@ -2,90 +2,115 @@
 
 Here are the new features introduced in this Gradle release.
 
-### Daemon health monitoring
+<!--
+IMPORTANT: if this is a patch release, ensure that a prominent link is included in the foreword to all releases of the same minor stream.
+Add-->
 
-The daemon actively monitors its health and may expire earlier if its performance degrades.
-The current implementation monitors the overhead of garbage collector and may detect memory issues.
-Memory problems can be caused by 3rd party plugins written without performance review.
-We want the Gradle daemon to be rock solid and enabled by default in the future.
-This feature is a big step forward towards the goal.
-Down the road the health monitoring will get richer and smarter, providing the users the insight into daemon's performance
-and deciding whether to restart the daemon process.
+<!--
+### Example new and noteworthy
+-->
 
-Incubating system property "org.gradle.daemon.performance.logging" can be used to switch on an elegant message emitted at the beginning of each build.
-The new information presented in the build log helps getting better understanding of daemon's performance:
+### Zip file name encoding
 
-    Starting 3rd build in daemon [uptime: 15 mins, performance: 92%, memory: 65% of 1.1 GB]
+Gradle will use the default character encoding for file names when creating Zip archives.  Depending on where the archive will be extracted, this may not be the best possible encoding
+to use due to the way various operating systems and archive tools interpret file names in the archive.  Some tools assume the extracting platform character encoding is the same encoding used
+to create the archive. A mismatch between encodings will manifest itself as "corrupted" or "mangled" file names.
 
-The logging can be turned on by tweaking "org.gradle.jvmargs" property of the gradle.properties file:
+[Zip](dsl/org.gradle.api.tasks.bundling.Zip.html) tasks can now be configured with an explicit encoding to handle cases where the default character encoding is inappropriate.  This configuration
+option only affects the file name and comment fields of the archive (not the _content_ of the files in the archive). The default behavior has not been changed, so no changes
+should be necessary for existing builds.
 
-    org.gradle.jvmargs=-Dorg.gradle.daemon.performance.logging=true
+### PMD Improvements (i)
 
-### Support for AWS S3 backed repositories
+#### PMD 'rulePriority' configuration
 
-Gradle now supports S3 backed repositories. Here's an example on how to declare a S3 backed maven repository in gradle:
+By default, the PMD plugin will report all rule violations and fail if any violations are found.  This means the only way to disable low priority violations was to create a custom ruleset.
 
-    repositories {
-        maven {
-            url "s3://someS3Bucket/maven2"
-            credentials(AwsCredentials) {
-                accessKey "someKey"
-                secretKey "someSecret"
-            }
+Gradle now supports configuring a "rule priority" threshold.  The PMD report will contain only violations higher than or equal to the priority configured.
+
+You configure the threshold via the [PmdExtension](dsl/org.gradle.api.plugins.quality.PmdExtension.html).  You can also configure the property on a per-task level through
+[Pmd](dsl/org.gradle.api.plugins.quality.Pmd.html).
+
+   pmd {
+       rulePriority = 3
+   }
+
+#### Better PMD analysis with type resolution
+
+Some PMD rules require access to the dependencies of your project to perform type resolution. If the dependencies are available on PMD's auxclasspath,
+[additional problems can be detected](http://pmd.sourceforge.net/pmd-5.3.2/pmd-java/rules/java/android.html).
+
+Gradle now automatically adds the compile dependencies of each analyzed source set to PMD's auxclasspath.  No additional configuration should be necessary to enable this in existing builds.
+
+### Managed model improvements
+
+TBD: Currently, managed model works well for defining a tree of objects. This release improves support for a graph of objects, with references between different model
+elements.
+
+- Can use a reference property as input for a rule.
+
+### Rule based model configuration
+Interoperability between legacy configuration space and new rule based model configuration has been improved. More specifically, the `tasks.withType(..)` construct allows legacy configuration tasks
+to depend on tasks created via the new rule based approach. See [this issue](https://issues.gradle.org/browse/GRADLE-3318) for details.
+
+### Faster compilation for continuous builds
+
+Many Gradle compilers are spawned as separate daemons to accommodate special heap size settings, classpath configurations, etc.  These compiler daemons are started on use, and stopped at
+the end of the build.  With Gradle 2.8, these compiler daemons are kept running during the lifetime of a continuous build session and only stopped when the continuous build is canceled.
+This improves the performance of continuous builds as the cost of re-spawning these compilers is avoided in between builds.
+
+Note that this improvement reduces the overhead of running forked compilers in continuous mode.  This means that it is not relevant for non-continuous builds or builds where the compiler
+is run in-process.  In practical terms, this means this improvement affects the following scenarios:
+
+- Java compiler - when options.fork = true (default is false)
+- Scala compiler - when scalaCompileOptions.useAnt = false (default is true)
+- Groovy compiler - when options.fork = true (default is true)
+
+The Play Routes compiler, Twirl compiler, Javascript compiler, and Scala compiler always run as forked daemons, so compiler reuse will always
+be used for those compilers when in continuous mode.
+
+### TestKit API exposes method for injecting classes under test
+
+Previous releases of Gradle required the end user to provide classes under test (e.g. plugin and custom task implementations) to the TestKit by assigning them to the buildscript's classpath.
+
+This release makes it more convenient to inject classes under test through the `GradleRunner` API with the method
+[withClasspath(java.util.List)](javadoc/org/gradle/testkit/runner/GradleRunner.html#withClasspath(java.util.List)). This classpath is then available to use to locate plugins in a test build via the
+[plugins DSL](userguide/plugins.html#sec:plugins_block). The following code example demonstrates the use of the new TestKit API in a test class based on the test framework Spock:
+
+    class BuildLogicFunctionalTest extends Specification {
+        @Rule final TemporaryFolder testProjectDir = new TemporaryFolder()
+        File buildFile
+        List<URI> pluginClasspath
+
+        def setup() {
+            buildFile = testProjectDir.newFile('build.gradle')
+            pluginClasspath = getClass().classLoader.findResource("plugin-classpath.txt")
+              .readLines()
+              .collect { new File(it).toURI() }
         }
 
-        ivy {
-            url "s3://someS3Bucket/ivy"
-            credentials(AwsCredentials) {
-                accessKey "someKey"
-                secretKey "someSecret"
-            }
+        def "execute helloWorld task"() {
+            given:
+            buildFile << """
+                plugins {
+                    id 'com.company.helloworld'
+                }
+            """
+
+            when:
+            def result = GradleRunner.create()
+                .withProjectDir(testProjectDir.root)
+                .withArguments('helloWorld')
+                .withClasspath(pluginClasspath)
+                .build()
+
+            then:
+            result.standardOutput.contains('Hello world!')
+            result.taskPaths(SUCCESS) == [':helloWorld']
         }
     }
 
-A big thank you goes to Adrian Kelly for implementing this feature.
-
-### Improved performance with class loader caching
-
-We want each new version of Gradle to perform better.
-Gradle is faster and less memory hungry when class loaders are reused between builds.
-The daemon process can cache the class loader instances, and consequently, the loaded classes.
-This unlocks modern jvm optimizations that lead to faster execution of consecutive builds.
-This also means that if the class loader is reused, static state is preserved from the previous build.
-Class loaders are not reused when build script classpath changes (for example, when the build script file is changed).
-
-In the reference project, we observed 10% build speed improvement for the initial build invocations in given daemon process.
-Later build invocations perform even better in comparison to Gradle daemon without classloader caching.
-
-### Google Test support (i)
-
-- TBD
-
-### Model rules
-
-A number of improvements have been made to the model rules execution used by the native language plugins:
-
-- Added a basic `model` report to allow you to see the structure of the model for a particular project.
-- `@Defaults` annotation allow logic to be applied to attach defaults to a model element.
-- `@Validate` annotation allow logic to be applied to validate a model element after it has been configured.
-- `CollectionBuilder` allows rules to be applied to all elements in the collection, or to a particular element, or all elements of a given type.
-
-### Tooling API improvements
-
-There is a new API `GradleProject#getProjectDirectory` that returns the project directory of the project.
-
-### Dependency substitution accepts projects
-
-You can now replace an external dependency with a project dependency. The `DependencyResolveDetails` object
-allows access to the `ComponentSelector` as well:
-
-    resolutionStrategy {
-        eachDependency { details ->
-            if (details.selector instanceof ModuleComponentSelector && details.selector.group == 'com.example' && details.selector.module == 'my-module') {
-                useTarget project(":my-module")
-            }
-        }
-    }
+Future versions of Gradle will aim for automatically injecting the classpath without additional configuration from the end user.
 
 ## Promoted features
 
@@ -105,99 +130,65 @@ The following are the features that have been promoted in this Gradle release.
 Features that have become superseded or irrelevant due to the natural evolution of Gradle become *deprecated*, and scheduled to be removed
 in the next major Gradle version (Gradle 3.0). See the User guide section on the “[Feature Lifecycle](userguide/feature_lifecycle.html)” for more information.
 
-The following are the newly deprecated items in this Gradle release. If you have concerns about a deprecation, please raise it via the [Gradle Forums](http://forums.gradle.org).
+The following are the newly deprecated items in this Gradle release. If you have concerns about a deprecation, please raise it via the [Gradle Forums](http://discuss.gradle.org).
 
-<!--
-### Example deprecation
--->
+### AvailablePortFinder
 
-### Dependency substitution changes
-
-In previous Gradle versions you could replace an external dependency with another like this:
-
-    resolutionStrategy {
-        eachDependency { details ->
-            if (details.requested.group == 'com.example' && details.requested.module == 'my-module') {
-                useVersion '1.3'
-            }
-        }
-    }
-
-Now the `requested` property on `DependencyResolveDetails` is deprecated; you can use the `selector` property instead. This returns a `ComponentSelector` instead
-a `ModuleVersionSelector`.
-
-The `useVersion()` method is also deprecated. You can use the `useTarget()` method instead:
-
-    resolutionStrategy {
-        eachDependency { details ->
-            if (details.selector instanceof ModuleComponentSelector && details.selector.group == 'com.example' && details.selector.module == 'my-module') {
-                useTarget group: 'com.example', name: 'my-module', version: '1.3'
-            }
-        }
-    }
-
-Note that `ModuleComponentSelector` has a `module` property to return the module's name, while `ModuleVersionSelector` had a `name` property.
+The class `org.gradle.util.AvailablePortFinder` has been deprecated and will be removed in the next version of Gradle.  Although this class is an internal class and
+not a part of the public API, some users may be utilizing it and should plan to implement an alternative.
 
 ## Potential breaking changes
 
-### Model DSL changes
+Upgraded to Groovy 2.4.4. This should be transparent to the majority of users, however it can imply some minor breaking changes.
+Please refer to the [Groovy language changelogs](http://groovy-lang.org/changelogs.html) for further details.
 
-There have been some changes to the behaviour of the `model { ... }` block:
+### Support for PMD versions <5.0
 
-- The `tasks` container now delegates to a `CollectionBuilder<Task>` instead of a `TaskContainer`.
-- The `components` container now delegates to a `CollectionBuilder<ComponentSpec>` instead of a `ComponentSpecContainer`.
-- The `binaries` container now delegates to a `CollectionBuilder<BinarySpec>` instead of a `BinaryContainer`.
+Investigation of our PMD support revealed that newer PMD plugin features do not work with PMD 4.3,
+and the PMD check task does not fail when finding violations.
+Because of this, we do not recommend the use Gradle with PMD versions earlier than 5.0,
+and we have removed any integration test coverage for these versions.
 
-Generally, the DSL should be the same, except:
+### New PMD violations due to type resolution changes
 
-- Elements are not implicitly created. In particular, to define a task with default type, you need to use `model { tasks { myTask(Task) { ... } }`
-- Elements are not created or configured eagerly, but are configured as required.
-- The `create` method returns void.
-- The `withType()` method selects elements based on the public contract type rather than implementation type.
-- Using create syntax fails when the element already exists.
-- There are currently no query method on this interface.
+PMD can perform additional analysis for some rules (see above), therefore new violations may be found in existing projects.  Previously, these rules were unable to detect problems
+because classes outside of your project were not available during analysis.
 
-### Updated default zinc compiler version
+### Improved IDE project naming deduplication
 
-The default zinc compiler version has changed from 0.3.0 to 0.3.5.3
+To ensure unique project names in the IDE, Gradle applies a deduplication logic when generating IDE metadata for Eclipse and Idea projects.
+This deduplication logic has been improved. All projects with non unique names are now deduplicated. here's an example for clarification:
 
-### MavenDeployer no longer uses global Maven settings.xml
+Given a Gradle multiproject build with the following project structure
 
-- User settings file was never used, but global settings.xml was considered
-- Mirror settings no longer cause GRADLE-2681
-- Authentication and Proxy settings are not used
+    root
+    |-foo
+    |  \- app
+    |
+    \-bar
+       \- app
 
-- Local repository location in user settings.xml _is_ honoured when deploying (it was always honoured when installing)
+results in the following IDE project name mapping:
 
-### PublishToMavenLocal task ignores repository setting
-
-Previously, the `PublishToMavenLocal` task could be configured with an `ArtifactRepository` instance, which would specify the
-location to `install` to. The default repository was `mavenLocal()`.
-
-It is no longer possible to override this location by supplying a repository to the `PublishToMavenLocal` task. Any supplied repository
-will be ignored.
-
-### DependencyResolveDetails.getTarget() is gone
-
-There still is a `getTarget()` method on `DefaultDependencyResolveDetails`, but it returns a `ComponentSelector` instead of a `ModuleVersionSelector`.
+    root
+    |-foo
+    |  \- foo-app
+    |
+    \-bar
+       \- bar-app
 
 ## External contributions
 
 We would like to thank the following community members for making contributions to this release of Gradle.
 
-* [Adrian Kelly](https://github.com/adrianbk)
-    - Adding support for AWS S3 backed maven repositories
-    - Don't run assemble task in pull-request validation builds on [travis-ci](https://travis-ci.org/gradle/gradle/builds)
-* [Daniel Lacasse](https://github.com/Shad0w1nk) - support GoogleTest for testing C++ binaries
-* [Victor Bronstein](https://github.com/victorbr) 
-    - Convert NotationParser implementations to NotationConverter
-    - Only parse Maven settings once per project to determine local maven repository location (GRADLE-3219) 
-* [Vyacheslav Blinov](https://github.com/dant3) - fix for `test.testLogging.showStandardStreams = false` (GRADLE-3218)
-* [Michal Bendowski](https://github.com/bendowski-google) - six webDist userguide example
-* [Daniel Siwiec](https://github.com/danielsiwiec) - update `README.md`
-* [Andreas Schmid](https://github.com/aaschmid) - add test coverage for facet type configuration in `GenerateEclipseWtpFacet`
-* [Roman Donchenko](https://github.com/SpecLad) - fix a bug in `org.gradle.api.specs.OrSpecTest`
-* [Lorant Pinter](https://github.com/lptr), [Daniel Vigovszky](https://github.com/vigoo) and [Mark Vujevits](https://github.com/vujevits),  - implement dependency substitution for projects
+* [Andrew Audibert](https://github.com/aaudiber) - Documentation fix
+* [Vladislav Bauer](https://github.com/vbauer) - StringBuffer cleanup
+* [Juan Martín Sotuyo Dodero](https://github.com/jsotuyod) - Allow user to configure auxclasspath for PMD
+* [Alpha Hinex](https://github.com/AlphaHinex) - Allow encoding to be specified for Zip task
+* [Brian Johnson](https://github.com/john3300) - Fix AIX support for GRADLE-2799
+* [Alex Muthmann](https://github.com/deveth0) - Documentation fix
+* [Adam Roberts](https://github.com/AdamRoberts) - Specify minimum priority for PMD task
+* [John Wass](https://github.com/jw3) - Documentation fix
 
 We love getting contributions from the Gradle community. For information on contributing, please see [gradle.org/contribute](http://gradle.org/contribute).
 

@@ -16,53 +16,70 @@
 
 package org.gradle.performance
 
-import org.gradle.performance.fixture.BuildSpecification
-import org.gradle.performance.fixture.Toggles
+import org.gradle.performance.fixture.BuildExperimentSpec
 import spock.lang.Unroll
 
 class OldVsNewJavaPluginPerformanceTest extends AbstractCrossBuildPerformanceTest {
 
-    @Unroll
-    def "#size project old vs new java plugin #scenario build"() {
-        given:
-        runner.testGroup = "old vs new java plugin"
-        runner.testId = "$size project old vs new java plugin $scenario build"
-        runner.buildSpecifications = [
-                BuildSpecification.forProject("${size}OldJava").displayName("old plugin").tasksToRun(*tasks).useDaemon().build(),
-                Toggles.modelReuse(BuildSpecification.forProject("${size}NewJava")).displayName("new plugin").tasksToRun(*tasks).useDaemon().build()
-        ]
-
-        when:
-        def result = runner.run()
-
-        then:
-        result.assertEveryBuildSucceeds()
-
-        where:
-        [size, tasks] << GroovyCollections.combinations(
-                ["small", "medium", "big"],
-                [["clean", "assemble"], ["help"]]
-        )
-        scenario = tasks == ["help"] ? "empty" : "full"
+    @Override
+    protected void defaultSpec(BuildExperimentSpec.Builder builder) {
+        builder.invocation.gradleOpts("-Xmx1024m", "-XX:MaxPermSize=256m")
+        super.defaultSpec(builder)
     }
 
     @Unroll
-    def "#size project old vs new java plugin partial build"() {
-        given:
-        runner.testGroup = "old vs new java plugin"
-        runner.testId = "$size project old vs new java plugin partial build"
-        runner.buildSpecifications = [
-                BuildSpecification.forProject("${size}OldJava").displayName("old plugin").tasksToRun(":project1:clean", ":project1:assemble").useDaemon().build(),
-                Toggles.modelReuse(BuildSpecification.forProject("${size}NewJava").displayName("new plugin").tasksToRun(":project1:clean", ":project1:assemble").useDaemon()).build()
-        ]
-
+    def "#size project old vs new java plugin #scenario build"() {
         when:
-        def result = runner.run()
+        runner.testGroup = "old vs new java plugin"
+        runner.testId = "$size project old vs new java plugin $scenario build"
+        runner.buildSpec {
+            projectName("${size}NewJava").displayName("new plugin").invocation {
+                tasksToRun(*tasks).useDaemon().enableTransformedModelDsl()
+            }
+        }
+        runner.buildSpec {
+            projectName("${size}NewJava").displayName("new plugin (reuse)").invocation {
+                tasksToRun(*tasks).useDaemon().enableTransformedModelDsl().enableModelReuse()
+            }
+        }
+        runner.buildSpec {
+            projectName("${size}NewJava").displayName("new plugin (reuse + tooling api)").invocation {
+                tasksToRun(*tasks).useToolingApi().enableTransformedModelDsl().enableModelReuse()
+            }
+        }
+        runner.buildSpec {
+            projectName("${size}NewJava").displayName("new plugin (no client logging)").invocation {
+                tasksToRun(*tasks).useDaemon().enableTransformedModelDsl().disableDaemonLogging()
+            }
+        }
+        runner.baseline {
+            projectName("${size}OldJava").displayName("old plugin").invocation {
+                tasksToRun(*tasks).useDaemon()
+            }
+        }
+        runner.baseline {
+            projectName("${size}OldJava").displayName("old plugin (tooling api)").invocation {
+                tasksToRun(*tasks).useToolingApi()
+            }
+        }
+        runner.baseline {
+            projectName("${size}OldJava").displayName("old plugin (no client logging)").invocation {
+                tasksToRun(*tasks).useDaemon().disableDaemonLogging()
+            }
+        }
 
         then:
-        result.assertEveryBuildSucceeds()
+        runner.run()
 
         where:
-        size << ["medium", "big"]
+        scenario  | size     | tasks
+        "empty"   | "small"  | ["help"]
+        "empty"   | "medium" | ["help"]
+        "empty"   | "big"    | ["help"]
+        "full"    | "small"  | ["clean", "assemble"]
+        "full"    | "medium" | ["clean", "assemble"]
+        "full"    | "big"    | ["clean", "assemble"]
+        "partial" | "medium" | [":project1:clean", ":project1:assemble"]
+        "partial" | "big"    | [":project1:clean", ":project1:assemble"]
     }
 }

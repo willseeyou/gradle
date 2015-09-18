@@ -36,13 +36,14 @@ import org.gradle.api.tasks.bundling.Zip
 import org.gradle.internal.reflect.Instantiator
 import org.gradle.internal.service.ServiceRegistry
 import org.gradle.jvm.tasks.Jar
-import org.gradle.model.collection.CollectionBuilder
+import org.gradle.model.ModelMap
 import org.gradle.platform.base.BinaryContainer
 import org.gradle.platform.base.BinaryTasksCollection
 import org.gradle.play.PlayApplicationBinarySpec
 import org.gradle.play.distribution.PlayDistribution
 import org.gradle.play.distribution.PlayDistributionContainer
 import org.gradle.play.internal.distribution.DefaultPlayDistribution
+import org.gradle.util.WrapUtil
 import spock.lang.Specification
 
 class PlayDistributionPluginTest extends Specification {
@@ -86,13 +87,14 @@ class PlayDistributionPluginTest extends Specification {
     }
 
     def "adds scripts and distribution jar tasks for binary" () {
+        def distributions = Mock(PlayDistributionContainer)
         File buildDir = new File("")
         DomainObjectSet jarTasks = Stub(DomainObjectSet)
         PlayApplicationBinarySpec binary = binary("playBinary", jarTasks)
         binary.getJarFile() >> Stub(File) {
             getName() >> "playBinary.zip"
         }
-        CollectionBuilder tasks = Mock(CollectionBuilder) {
+        ModelMap tasks = Mock(ModelMap) {
             get("createPlayBinaryStartScripts") >> Stub(CreateStartScripts)
             get("createPlayBinaryDistributionJar") >> Stub(Jar)
         }
@@ -119,7 +121,6 @@ class PlayDistributionPluginTest extends Specification {
                 }
             }
         }
-        PlayDistributionContainer distributions = distributions([distribution])
         ConfigurationContainer configurationContainer = Stub(ConfigurationContainer) {
             create(_) >> Stub(Configuration)
             maybeCreate(_) >> Stub(Configuration)
@@ -130,6 +131,7 @@ class PlayDistributionPluginTest extends Specification {
         plugin.createDistributionContentTasks(tasks, buildDir, distributions, configurations)
 
         then:
+        1 * distributions.withType(PlayDistribution) >> WrapUtil.toNamedDomainObjectSet(PlayDistribution, distribution)
         1 * tasks.create("createPlayBinaryStartScripts", CreateStartScripts, _) >> { String name, Class type, Action action ->
             action.execute(Mock(CreateStartScripts) {
                 1 * setDescription(_)
@@ -161,23 +163,23 @@ class PlayDistributionPluginTest extends Specification {
         File buildDir = new File("")
         DomainObjectSet jarTasks = Stub(DomainObjectSet)
         PlayApplicationBinarySpec binary = binary("playBinary", jarTasks)
-        CollectionBuilder tasks = Mock(CollectionBuilder) {
+        ModelMap tasks = Mock(ModelMap) {
             get("stagePlayBinaryDist") >> Stub(Copy)
         }
         PlayDistribution distribution = Mock(PlayDistribution) {
             getName() >> "playBinary"
             getContents() >> Mock(CopySpecInternal)
         }
-        PlayDistributionContainer distributions = distributions([ distribution ])
+        def distributions = Mock(PlayDistributionContainer)
 
         when:
         plugin.createDistributionZipTasks(tasks, buildDir, distributions)
 
         then:
+        1 * distributions.withType(PlayDistribution) >> WrapUtil.toNamedDomainObjectSet(PlayDistribution, distribution)
         1 * tasks.create("createPlayBinaryDist", Zip, _) >> { String name, Class type, Action action ->
             action.execute(Mock(Zip) {
                 1 * setDescription(_)
-                1 * setGroup(_)
                 1 * setDestinationDir(_)
                 1 * setArchiveName("playBinary.zip")
                 1 * from(_ as Copy)
@@ -186,7 +188,6 @@ class PlayDistributionPluginTest extends Specification {
         1 * tasks.create("stagePlayBinaryDist", Copy, _) >> { String name, Class type, Action action ->
             action.execute(Mock(Copy) {
                 1 * setDescription(_)
-                1 * setGroup(_)
                 1 * setDestinationDir(_)
                 1 * getRootSpec() >> Mock(DestinationRootCopySpec) {
                     1 * addChild() >> Mock(CopySpecInternal) {

@@ -39,17 +39,18 @@ import java.io.Serializable;
 import java.util.List;
 
 public class GoogleClosureCompiler implements Compiler<JavaScriptCompileSpec>, Serializable {
+    private static final Iterable<String> SHARED_PACKAGES = Lists.newArrayList("com.google.javascript");
     private static final String DEFAULT_GOOGLE_CLOSURE_VERSION = "v20141215";
     private Class<?> sourceFileClass;
     private Class<?> compilerOptionsClass;
     private Class<Enum> compilationLevelClass;
     private Class<Object> compilerClass;
 
-    public List<String> getClassLoaderPackages() {
-        return Lists.newArrayList("com.google.javascript");
+    public Iterable<String> getClassLoaderPackages() {
+        return SHARED_PACKAGES;
     }
 
-    public Object getDependencyNotation() {
+    public static Object getDependencyNotation() {
         return String.format("com.google.javascript:closure-compiler:%s", DEFAULT_GOOGLE_CLOSURE_VERSION);
     }
 
@@ -83,7 +84,7 @@ public class GoogleClosureCompiler implements Compiler<JavaScriptCompileSpec>, S
         Object sourceFile = fromFileJavaMethod.invokeStatic(javascriptFile.getFile());
 
         // Construct a new CompilerOptions class
-        Factory<?> compilerOptionsFactory = JavaReflectionUtil.factory(new DirectInstantiator(), compilerOptionsClass);
+        Factory<?> compilerOptionsFactory = JavaReflectionUtil.factory(DirectInstantiator.INSTANCE, compilerOptionsClass);
         Object compilerOptions = compilerOptionsFactory.create();
 
         // Get the CompilationLevel.SIMPLE_OPTIMIZATIONS class and set it on the CompilerOptions class
@@ -92,7 +93,7 @@ public class GoogleClosureCompiler implements Compiler<JavaScriptCompileSpec>, S
         setOptionsForCompilationLevelMethod.invoke(simpleLevel, compilerOptions);
 
         // Construct a new Compiler class
-        Factory<?> compilerFactory = JavaReflectionUtil.factory(new DirectInstantiator(), compilerClass, getDummyPrintStream());
+        Factory<?> compilerFactory = JavaReflectionUtil.factory(DirectInstantiator.INSTANCE, compilerClass, getDummyPrintStream());
         Object compiler = compilerFactory.create();
 
         // Compile the javascript file with the options we've created

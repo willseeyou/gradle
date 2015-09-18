@@ -24,21 +24,15 @@ import org.gradle.api.internal.artifacts.DefaultComponentSelection;
 import org.gradle.api.internal.artifacts.ivyservice.ivyresolve.strategy.VersionComparator;
 import org.gradle.api.internal.artifacts.ivyservice.ivyresolve.strategy.VersionSelector;
 import org.gradle.api.internal.artifacts.ivyservice.ivyresolve.strategy.VersionSelectorScheme;
-import org.gradle.internal.Factory;
-import org.gradle.internal.component.external.model.DefaultModuleComponentIdentifier;
 import org.gradle.internal.component.model.ComponentResolveMetaData;
-import org.gradle.internal.component.model.DependencyMetaData;
 import org.gradle.internal.resolve.result.BuildableComponentSelectionResult;
 import org.gradle.internal.resolve.result.BuildableModuleComponentMetaDataResolveResult;
-import org.gradle.internal.resolve.result.ModuleVersionListing;
 import org.gradle.internal.rules.SpecRuleAction;
 import org.gradle.util.CollectionUtils;
 
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
-
-import static org.gradle.api.internal.artifacts.ivyservice.ivyresolve.MetadataProvider.MetaDataSupplier;
 
 class DefaultVersionedComponentChooser implements VersionedComponentChooser {
     private final ComponentSelectionRulesProcessor rulesProcessor = new ComponentSelectionRulesProcessor();
@@ -73,44 +67,76 @@ class DefaultVersionedComponentChooser implements VersionedComponentChooser {
         return componentResolveMetaData.isGenerated();
     }
 
-    public void selectNewestMatchingComponent(ModuleVersionListing versions, DependencyMetaData dependency, ModuleComponentRepositoryAccess moduleAccess, BuildableComponentSelectionResult result) {
-        ModuleVersionSelector requestedModule = dependency.getRequested();
-        VersionSelector requestedVersion = versionSelectorScheme.parseSelector(requestedModule.getVersion());
+    public void selectNewestMatchingComponent(Collection<? extends ModuleComponentResolveState> versions, BuildableComponentSelectionResult result, ModuleVersionSelector requested) {
+        VersionSelector requestedVersion = versionSelectorScheme.parseSelector(requested.getVersion());
         Collection<SpecRuleAction<? super ComponentSelection>> rules = componentSelectionRules.getRules();
 
-        for (Versioned candidate : sortLatestFirst(versions)) {
-            ModuleComponentIdentifier candidateIdentifier = DefaultModuleComponentIdentifier.newId(requestedModule.getGroup(), requestedModule.getName(), candidate.getVersion());
-            MetadataProvider metadataProvider = new MetadataProvider(new MetaDataSupplier(dependency, candidateIdentifier, moduleAccess));
+        for (ModuleComponentResolveState candidate : sortLatestFirst(versions)) {
+            MetadataProvider metadataProvider = new MetadataProvider(candidate);
 
-            if(requestedVersion.requiresMetadata() && !metadataProvider.canProvideMetaData()) {
+            boolean versionMatches = versionMatches(requestedVersion, candidate, metadataProvider);
+            if (!metadataProvider.isUsable()) {
+                applyTo(metadataProvider, result);
+                return;
+            }
+            if (!versionMatches) {
+                result.notMatched(candidate.getVersion());
+                continue;
+            }
+
+            ModuleComponentIdentifier candidateIdentifier = candidate.getId();
+            boolean accepted = !isRejectedByRules(candidateIdentifier, rules, metadataProvider);
+            if (!metadataProvider.isUsable()) {
+                applyTo(metadataProvider, result);
                 return;
             }
 
-            if (versionMatches(requestedVersion, candidateIdentifier, metadataProvider)) {
-                if (!isRejectedByRules(candidateIdentifier, rules, metadataProvider)) {
-                    result.matches(candidateIdentifier);
-                    return;
-                }
+            if (accepted) {
+                result.matches(candidateIdentifier);
+                return;
+            }
 
-                if (requestedVersion.matchesUniqueVersion()) {
-                    break;
-                }
+            result.rejected(candidate.getVersion());
+            if (requestedVersion.matchesUniqueVersion()) {
+                // Only consider one candidate
+                break;
             }
         }
 
         result.noMatchFound();
     }
 
-    private boolean versionMatches(VersionSelector selector, ModuleComponentIdentifier candidateIdentifier, MetadataProvider metadataProvider) {
-        if (selector.requiresMetadata()) {
-            return selector.accept(metadataProvider.getComponentMetadata());
-        } else {
-            return selector.accept(candidateIdentifier.getVersion());
+    private void applyTo(MetadataProvider provider, BuildableComponentSelectionResult result) {
+        BuildableModuleComponentMetaDataResolveResult metaDataResult = provider.getResult();
+        switch (metaDataResult.getState()) {
+            case Unknown:
+                // For example, when using a local access to resolve something remote
+                result.noMatchFound();
+                break;
+            case Missing:
+                result.noMatchFound();
+                break;
+            case Failed:
+                result.failed(metaDataResult.getFailure());
+                break;
+            default:
+                throw new IllegalStateException("Unexpected meta-data resolution result.");
         }
     }
 
-    public boolean isRejectedComponent(ModuleComponentIdentifier candidateIdentifier, Factory<? extends BuildableModuleComponentMetaDataResolveResult> metaDataSupplier) {
-        return isRejectedByRules(candidateIdentifier, componentSelectionRules.getRules(), new MetadataProvider(metaDataSupplier));
+    private boolean versionMatches(VersionSelector selector, ModuleComponentResolveState component, MetadataProvider metadataProvider) {
+        if (selector.requiresMetadata()) {
+            if (!metadataProvider.resolve()) {
+                return false;
+            }
+            return selector.accept(metadataProvider.getComponentMetadata());
+        } else {
+            return selector.accept(component.getVersion());
+        }
+    }
+
+    public boolean isRejectedComponent(ModuleComponentIdentifier candidateIdentifier, MetadataProvider metadataProvider) {
+        return isRejectedByRules(candidateIdentifier, componentSelectionRules.getRules(), metadataProvider);
     }
 
     private boolean isRejectedByRules(ModuleComponentIdentifier candidateIdentifier, Collection<SpecRuleAction<? super ComponentSelection>> rules, MetadataProvider metadataProvider) {
@@ -119,7 +145,7 @@ class DefaultVersionedComponentChooser implements VersionedComponentChooser {
         return selection.isRejected();
     }
 
-    private List<Versioned> sortLatestFirst(ModuleVersionListing listing) {
-        return CollectionUtils.sort(listing.getVersions(), Collections.reverseOrder(versionComparator));
+    private List<ModuleComponentResolveState> sortLatestFirst(Collection<? extends ModuleComponentResolveState> listing) {
+        return CollectionUtils.sort(listing, Collections.reverseOrder(versionComparator));
     }
 }

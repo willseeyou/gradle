@@ -16,8 +16,10 @@
 
 package org.gradle.model.internal.core;
 
+import com.google.common.base.Function;
+import com.google.common.base.Optional;
+import com.google.common.collect.Iterables;
 import org.gradle.api.Nullable;
-import org.gradle.api.Transformer;
 import org.gradle.api.specs.Spec;
 import org.gradle.model.internal.core.rule.describe.ModelRuleDescriptor;
 import org.gradle.model.internal.type.ModelType;
@@ -48,22 +50,22 @@ public class ChainingModelProjection implements ModelProjection {
         });
     }
 
-    private Iterable<String> collectDescriptions(Transformer<Iterable<String>, ModelProjection> transformer) {
-        return CollectionUtils.flattenCollections(String.class, CollectionUtils.collect(projections, transformer));
+    private Iterable<String> collectDescriptions(final Function<ModelProjection, Iterable<String>> transformer) {
+        return Iterables.concat(Iterables.transform(projections, transformer));
     }
 
-    public Iterable<String> getWritableTypeDescriptions() {
-        return collectDescriptions(new Transformer<Iterable<String>, ModelProjection>() {
-            public Iterable<String> transform(ModelProjection projection) {
-                return projection.getWritableTypeDescriptions();
+    public Iterable<String> getWritableTypeDescriptions(final MutableModelNode node) {
+        return collectDescriptions(new Function<ModelProjection, Iterable<String>>() {
+            public Iterable<String> apply(ModelProjection projection) {
+                return projection.getWritableTypeDescriptions(node);
             }
         });
     }
 
-    public Iterable<String> getReadableTypeDescriptions() {
-        return collectDescriptions(new Transformer<Iterable<String>, ModelProjection>() {
-            public Iterable<String> transform(ModelProjection projection) {
-                return projection.getReadableTypeDescriptions();
+    public Iterable<String> getReadableTypeDescriptions(final MutableModelNode node) {
+        return collectDescriptions(new Function<ModelProjection, Iterable<String>>() {
+            public Iterable<String> apply(ModelProjection projection) {
+                return projection.getReadableTypeDescriptions(node);
             }
         });
     }
@@ -103,6 +105,11 @@ public class ChainingModelProjection implements ModelProjection {
         ChainingModelProjection that = (ChainingModelProjection) o;
 
         return projections.equals(that.projections);
+    }
+
+    @Override
+    public Optional<String> getValueDescription(MutableModelNode modelNodeInternal) {
+        return Optional.absent();
     }
 
     @Override

@@ -18,9 +18,7 @@ package org.gradle.platform.base.internal.registry;
 
 import com.google.common.collect.ImmutableList;
 import org.gradle.api.internal.file.FileResolver;
-import org.gradle.internal.reflect.DirectInstantiator;
 import org.gradle.internal.reflect.Instantiator;
-import org.gradle.internal.reflect.JavaReflectionUtil;
 import org.gradle.internal.service.ServiceRegistry;
 import org.gradle.language.base.LanguageSourceSet;
 import org.gradle.language.base.internal.registry.LanguageRegistry;
@@ -30,10 +28,13 @@ import org.gradle.language.base.sources.BaseLanguageSourceSet;
 import org.gradle.model.internal.core.*;
 import org.gradle.model.internal.core.rule.describe.ModelRuleDescriptor;
 import org.gradle.model.internal.inspect.MethodRuleDefinition;
+import org.gradle.model.internal.manage.schema.ModelSchema;
+import org.gradle.model.internal.manage.schema.ModelSchemaStore;
 import org.gradle.model.internal.type.ModelType;
 import org.gradle.platform.base.LanguageType;
 import org.gradle.platform.base.LanguageTypeBuilder;
 import org.gradle.platform.base.internal.builder.LanguageTypeBuilderInternal;
+import org.gradle.platform.base.internal.builder.TypeBuilderFactory;
 import org.gradle.platform.base.internal.builder.TypeBuilderInternal;
 import org.gradle.platform.base.internal.util.ImplementationTypeDetermer;
 
@@ -42,8 +43,13 @@ import java.util.List;
 public class LanguageTypeModelRuleExtractor extends TypeModelRuleExtractor<LanguageType, LanguageSourceSet, BaseLanguageSourceSet> {
     public ImplementationTypeDetermer<LanguageSourceSet, BaseLanguageSourceSet> implementationTypeDetermer = new ImplementationTypeDetermer<LanguageSourceSet, BaseLanguageSourceSet>("language", BaseLanguageSourceSet.class);
 
-    public LanguageTypeModelRuleExtractor() {
-        super("language", LanguageSourceSet.class, BaseLanguageSourceSet.class, LanguageTypeBuilder.class, JavaReflectionUtil.factory(new DirectInstantiator(), DefaultLanguageTypeBuilder.class));
+    public LanguageTypeModelRuleExtractor(ModelSchemaStore schemaStore) {
+        super("language", LanguageSourceSet.class, BaseLanguageSourceSet.class, LanguageTypeBuilder.class, schemaStore, new TypeBuilderFactory<LanguageSourceSet>() {
+            @Override
+            public TypeBuilderInternal<LanguageSourceSet> create(ModelSchema<? extends LanguageSourceSet> schema) {
+                return new DefaultLanguageTypeBuilder(schema);
+            }
+        });
     }
 
     @Override
@@ -60,8 +66,8 @@ public class LanguageTypeModelRuleExtractor extends TypeModelRuleExtractor<Langu
     public static class DefaultLanguageTypeBuilder extends AbstractTypeBuilder<LanguageSourceSet> implements LanguageTypeBuilderInternal<LanguageSourceSet> {
         private String languageName;
 
-        public DefaultLanguageTypeBuilder() {
-            super(LanguageType.class);
+        public DefaultLanguageTypeBuilder(ModelSchema<? extends LanguageSourceSet> schema) {
+            super(LanguageType.class, schema);
         }
 
         @Override

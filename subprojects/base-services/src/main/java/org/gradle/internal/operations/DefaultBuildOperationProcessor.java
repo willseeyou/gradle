@@ -16,38 +16,24 @@
 
 package org.gradle.internal.operations;
 
-import com.google.common.util.concurrent.ListeningExecutorService;
-import com.google.common.util.concurrent.MoreExecutors;
-import org.gradle.api.Action;
-import org.gradle.internal.concurrent.ThreadFactoryImpl;
+import org.gradle.api.Nullable;
+import org.gradle.internal.concurrent.ExecutorFactory;
+import org.gradle.internal.concurrent.Stoppable;
+import org.gradle.internal.concurrent.StoppableExecutor;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+public class DefaultBuildOperationProcessor implements BuildOperationProcessor, Stoppable {
 
-public class DefaultBuildOperationProcessor implements BuildOperationProcessor {
+    private final StoppableExecutor fixedSizePool;
 
-    private final ListeningExecutorService fixedSizePool;
-
-    public DefaultBuildOperationProcessor(int maxThreads) {
-        final int actualThreads = actualThreadCount(maxThreads);
-        // TODO: Who's responsible for shutting down this executor?
-        final ExecutorService underlyingExecutor = Executors.newFixedThreadPool(actualThreads, new ThreadFactoryImpl("build operations"));
-        this.fixedSizePool = MoreExecutors.listeningDecorator(underlyingExecutor);
+    public DefaultBuildOperationProcessor(ExecutorFactory executorFactory, int maxWorkerCount) {
+        this.fixedSizePool = executorFactory.create("build operations", maxWorkerCount);
     }
 
-    int actualThreadCount(int maxThreads) {
-        final int actualThreads;
-        if (maxThreads < 0) {
-            actualThreads = Runtime.getRuntime().availableProcessors();
-        } else if (maxThreads == 0) {
-            actualThreads = 1;
-        } else {
-            actualThreads = maxThreads;
-        }
-        return actualThreads;
+    public <T extends BuildOperation> BuildOperationQueue<T> newQueue(BuildOperationWorker<T> worker, @Nullable String logLocation) {
+        return new DefaultBuildOperationQueue<T>(fixedSizePool, worker, logLocation);
     }
 
-    public <T> OperationQueue<T> newQueue(Action<? super T> worker) {
-        return new DefaultOperationQueue<T>(fixedSizePool, worker);
+    public void stop() {
+        fixedSizePool.stop();
     }
 }

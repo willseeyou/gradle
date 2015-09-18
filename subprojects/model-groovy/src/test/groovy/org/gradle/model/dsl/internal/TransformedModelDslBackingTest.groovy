@@ -17,11 +17,18 @@
 package org.gradle.model.dsl.internal
 
 import org.gradle.api.Transformer
+import org.gradle.model.InvalidModelRuleDeclarationException
+import org.gradle.model.Managed
 import org.gradle.model.dsl.internal.inputs.RuleInputAccessBacking
+import org.gradle.model.dsl.internal.transform.InputReferences
 import org.gradle.model.dsl.internal.transform.SourceLocation
+import org.gradle.model.internal.core.DefaultNodeInitializerRegistry
 import org.gradle.model.internal.core.ModelCreators
 import org.gradle.model.internal.core.ModelPath
 import org.gradle.model.internal.core.ModelReference
+import org.gradle.model.internal.core.rule.describe.SimpleModelRuleDescriptor
+import org.gradle.model.internal.manage.schema.extract.DefaultConstructableTypesRegistry
+import org.gradle.model.internal.manage.schema.extract.DefaultModelSchemaStore
 import org.gradle.model.internal.registry.DefaultModelRegistry
 import org.gradle.model.internal.type.ModelType
 import spock.lang.Specification
@@ -29,10 +36,11 @@ import spock.lang.Specification
 class TransformedModelDslBackingTest extends Specification {
 
     def modelRegistry = new DefaultModelRegistry(null)
-    Transformer<List<ModelReference<?>>, Closure<?>> referenceExtractor = Mock()
-    Transformer<SourceLocation, Closure<?>> locationExtractor = Mock()
-    def blockOwner = new Object()
-    def modelDsl = new TransformedModelDslBacking(getModelRegistry(), referenceExtractor, locationExtractor)
+    def referenceExtractor = Mock(Transformer)
+    def locationExtractor = Mock(Transformer)
+    def schemaStore = DefaultModelSchemaStore.instance
+    def nodeInitializerRegistry = new DefaultNodeInitializerRegistry(DefaultModelSchemaStore.instance, new DefaultConstructableTypesRegistry())
+    def modelDsl = new TransformedModelDslBacking(getModelRegistry(), schemaStore, nodeInitializerRegistry, referenceExtractor, locationExtractor)
 
     void register(String pathString, Object element) {
         modelRegistry.create(ModelCreators.bridgedInstance(ModelReference.of(pathString, element.class), element).descriptor("register").build())
@@ -41,7 +49,10 @@ class TransformedModelDslBackingTest extends Specification {
     def "can add rules via dsl"() {
         given:
         register("foo", [])
-        referenceExtractor.transform(_) >> []
+        referenceExtractor.transform(_) >> new InputReferences()
+        locationExtractor.transform(_) >> Mock(SourceLocation) {
+            asDescriptor(_) >> new SimpleModelRuleDescriptor("foo")
+        }
 
         when:
         modelDsl.configure("foo") {
@@ -52,11 +63,55 @@ class TransformedModelDslBackingTest extends Specification {
         modelRegistry.realize(ModelPath.path("foo"), ModelType.of(List)) == [1]
     }
 
+    @Managed
+    static abstract class Thing {
+        abstract String getValue()
+
+        abstract void setValue(String value)
+    }
+
+    def "can add creator via dsl"() {
+        given:
+        referenceExtractor.transform(_) >> new InputReferences()
+        locationExtractor.transform(_) >> Mock(SourceLocation) {
+            asDescriptor(_) >> new SimpleModelRuleDescriptor("foo")
+        }
+
+        when:
+        modelDsl.create("foo", Thing) {
+            value = "set"
+        }
+
+        then:
+        modelRegistry.realize(ModelPath.path("foo"), ModelType.of(Thing)).value == "set"
+    }
+
+    def "can only create top level"() {
+        given:
+        referenceExtractor.transform(_) >> new InputReferences()
+        locationExtractor.transform(_) >> Mock(SourceLocation) {
+            asDescriptor(_) >> new SimpleModelRuleDescriptor("foo")
+        }
+
+        when:
+        modelDsl.create("foo.bar", Thing) {
+            value = "set"
+        }
+
+        then:
+        thrown InvalidModelRuleDeclarationException
+    }
+
     def "can registers extracted references"() {
         given:
+        def inputs = new InputReferences()
+        inputs.absolutePath("value", 123)
         register("foo", [])
         register("value", "123")
-        referenceExtractor.transform(_) >> [ModelReference.of("value", Object)]
+        referenceExtractor.transform(_) >> inputs
+        locationExtractor.transform(_) >> Mock(SourceLocation) {
+            asDescriptor(_) >> new SimpleModelRuleDescriptor("foo")
+        }
 
         when:
         modelDsl.with {
@@ -69,6 +124,5 @@ class TransformedModelDslBackingTest extends Specification {
         then:
         modelRegistry.realize(ModelPath.path("foo"), ModelType.of(List)) == ["123"]
     }
-
 }
 

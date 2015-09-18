@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 the original author or authors.
+ * Copyright 2015 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,30 +16,20 @@
 
 package org.gradle.model.internal.manage.schema;
 
-import com.google.common.collect.ImmutableSortedMap;
-import org.gradle.model.internal.type.ModelType;
+import org.gradle.model.internal.manage.schema.extract.ModelSchemaAspect;
 
-import java.lang.ref.WeakReference;
+import java.util.Collection;
 
-public class ModelStructSchema<T> extends ModelSchema<T> {
-    private final WeakReference<Class<? extends T>> managedImpl;
-    private final ImmutableSortedMap<String, ModelProperty<?>> properties;
+public interface ModelStructSchema<T> extends ModelSchema<T> {
+    boolean hasProperty(String name);
 
-    public ModelStructSchema(ModelType<T> type, Iterable<ModelProperty<?>> properties, Class<? extends T> managedImpl) {
-        super(type, Kind.STRUCT);
-        ImmutableSortedMap.Builder<String, ModelProperty<?>> builder = ImmutableSortedMap.naturalOrder();
-        for (ModelProperty<?> property : properties) {
-            builder.put(property.getName(), property);
-        }
-        this.properties = builder.build();
-        this.managedImpl = new WeakReference<Class<? extends T>>(managedImpl);
-    }
+    ModelProperty<?> getProperty(String name);
 
-    public ImmutableSortedMap<String, ModelProperty<?>> getProperties() {
-        return properties;
-    }
+    Collection<ModelProperty<?>> getProperties();
 
-    public Class<? extends T> getManagedImpl() {
-        return managedImpl.get();
-    }
+    boolean hasAspect(Class<? extends ModelSchemaAspect> aspectType);
+
+    <A extends ModelSchemaAspect> A getAspect(Class<A> aspectType);
+
+    Collection<ModelSchemaAspect> getAspects();
 }

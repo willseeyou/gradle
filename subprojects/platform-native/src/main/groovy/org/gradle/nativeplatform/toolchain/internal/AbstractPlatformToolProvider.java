@@ -19,15 +19,14 @@ package org.gradle.nativeplatform.toolchain.internal;
 import org.gradle.internal.operations.BuildOperationProcessor;
 import org.gradle.language.base.internal.compile.CompileSpec;
 import org.gradle.language.base.internal.compile.Compiler;
+import org.gradle.language.base.internal.compile.CompilerUtil;
 import org.gradle.nativeplatform.internal.LinkerSpec;
 import org.gradle.nativeplatform.internal.StaticLibraryArchiverSpec;
 import org.gradle.nativeplatform.platform.internal.OperatingSystemInternal;
 import org.gradle.nativeplatform.toolchain.internal.compilespec.*;
 import org.gradle.util.TreeVisitor;
 
-/**
- */
-public class AbstractPlatformToolProvider implements PlatformToolProvider {
+public abstract class AbstractPlatformToolProvider implements PlatformToolProvider {
     protected final OperatingSystemInternal targetOperatingSystem;
     protected final BuildOperationProcessor buildOperationProcessor;
 
@@ -41,10 +40,6 @@ public class AbstractPlatformToolProvider implements PlatformToolProvider {
     }
 
     public void explain(TreeVisitor<? super String> visitor) {
-    }
-
-    public String getObjectFileExtension() {
-        return targetOperatingSystem.isWindows() ? "obj" : "o";
     }
 
     public String getExecutableName(String executablePath) {
@@ -63,30 +58,47 @@ public class AbstractPlatformToolProvider implements PlatformToolProvider {
         return targetOperatingSystem.getInternalOs().getStaticLibraryName(libraryPath);
     }
 
-    public <T extends CompileSpec> org.gradle.language.base.internal.compile.Compiler<T> newCompiler(T spec) {
-        if (spec instanceof CppCompileSpec) {
-            return castCompiler(createCppCompiler());
+    @Override
+    public <T> T get(Class<T> toolType) {
+        throw new IllegalArgumentException(String.format("Don't know how to provide tool of type %s.", toolType.getSimpleName()));
+    }
+
+    public <T extends CompileSpec> org.gradle.language.base.internal.compile.Compiler<T> newCompiler(Class<T> spec) {
+        if (CppCompileSpec.class.isAssignableFrom(spec)) {
+            return CompilerUtil.castCompiler(createCppCompiler());
         }
-        if (spec instanceof CCompileSpec) {
-            return castCompiler(createCCompiler());
+        if (CppPCHCompileSpec.class.isAssignableFrom(spec)) {
+            return CompilerUtil.castCompiler(createCppPCHCompiler());
         }
-        if (spec instanceof ObjectiveCppCompileSpec) {
-            return castCompiler(createObjectiveCppCompiler());
+        if (CCompileSpec.class.isAssignableFrom(spec)) {
+            return CompilerUtil.castCompiler(createCCompiler());
         }
-        if (spec instanceof ObjectiveCCompileSpec) {
-            return castCompiler(createObjectiveCCompiler());
+        if (CPCHCompileSpec.class.isAssignableFrom(spec)) {
+            return CompilerUtil.castCompiler(createCPCHCompiler());
         }
-        if (spec instanceof WindowsResourceCompileSpec) {
-            return castCompiler(createWindowsResourceCompiler());
+        if (ObjectiveCppCompileSpec.class.isAssignableFrom(spec)) {
+            return CompilerUtil.castCompiler(createObjectiveCppCompiler());
         }
-        if (spec instanceof AssembleSpec) {
-            return castCompiler(createAssembler());
+        if (ObjectiveCppPCHCompileSpec.class.isAssignableFrom(spec)) {
+            return CompilerUtil.castCompiler(createObjectiveCppPCHCompiler());
         }
-        if (spec instanceof LinkerSpec) {
-            return castCompiler(createLinker());
+        if (ObjectiveCCompileSpec.class.isAssignableFrom(spec)) {
+            return CompilerUtil.castCompiler(createObjectiveCCompiler());
         }
-        if (spec instanceof StaticLibraryArchiverSpec) {
-            return castCompiler(createStaticLibraryArchiver());
+        if (ObjectiveCPCHCompileSpec.class.isAssignableFrom(spec)) {
+            return CompilerUtil.castCompiler(createObjectiveCPCHCompiler());
+        }
+        if (WindowsResourceCompileSpec.class.isAssignableFrom(spec)) {
+            return CompilerUtil.castCompiler(createWindowsResourceCompiler());
+        }
+        if (AssembleSpec.class.isAssignableFrom(spec)) {
+            return CompilerUtil.castCompiler(createAssembler());
+        }
+        if (LinkerSpec.class.isAssignableFrom(spec)) {
+            return CompilerUtil.castCompiler(createLinker());
+        }
+        if (StaticLibraryArchiverSpec.class.isAssignableFrom(spec)) {
+            return CompilerUtil.castCompiler(createStaticLibraryArchiver());
         }
         throw new IllegalArgumentException(String.format("Don't know how to compile from a spec of type %s.", spec.getClass().getSimpleName()));
     }
@@ -99,15 +111,31 @@ public class AbstractPlatformToolProvider implements PlatformToolProvider {
         throw unavailableTool("C++ compiler is not available");
     }
 
+    protected Compiler<?> createCppPCHCompiler() {
+        throw unavailableTool("C++ pre-compiled header compiler is not available");
+    }
+
     protected Compiler<?> createCCompiler() {
         throw unavailableTool("C compiler is not available");
+    }
+
+    protected Compiler<?> createCPCHCompiler() {
+        throw unavailableTool("C pre-compiled header compiler is not available");
     }
 
     protected Compiler<?> createObjectiveCppCompiler() {
         throw unavailableTool("Obj-C++ compiler is not available");
     }
 
+    protected Compiler<?> createObjectiveCppPCHCompiler() {
+        throw unavailableTool("Obj-C++ pre-compiled header compiler is not available");
+    }
+
     protected Compiler<?> createObjectiveCCompiler() {
+        throw unavailableTool("Obj-C compiler is not available");
+    }
+
+    protected Compiler<?> createObjectiveCPCHCompiler() {
         throw unavailableTool("Obj-C compiler is not available");
     }
 
@@ -127,8 +155,7 @@ public class AbstractPlatformToolProvider implements PlatformToolProvider {
         throw unavailableTool("Static library archiver is not available");
     }
 
-    @SuppressWarnings("unchecked")
-    private <T extends CompileSpec> Compiler<T> castCompiler(Compiler<?> compiler) {
-        return (Compiler<T>) compiler;
+    public String getObjectFileExtension() {
+        return targetOperatingSystem.isWindows() ? ".obj" : ".o";
     }
 }

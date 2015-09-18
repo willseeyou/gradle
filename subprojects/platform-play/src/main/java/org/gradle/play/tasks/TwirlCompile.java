@@ -46,7 +46,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Task for compiling twirl templates
+ * Task for compiling Twirl templates into Scala code.
  */
 @Incubating
 public class TwirlCompile extends SourceTask {
@@ -57,9 +57,6 @@ public class TwirlCompile extends SourceTask {
     private File outputDirectory;
 
     private BaseForkOptions forkOptions;
-
-    private Compiler<TwirlCompileSpec> compiler;
-
     private TwirlStaleOutputCleaner cleaner;
     private PlayPlatform platform;
 
@@ -71,10 +68,6 @@ public class TwirlCompile extends SourceTask {
             forkOptions = new BaseForkOptions();
         }
         return forkOptions;
-    }
-
-    void setCompiler(Compiler<TwirlCompileSpec> compiler) {
-        this.compiler = compiler;
     }
 
     /**
@@ -107,10 +100,7 @@ public class TwirlCompile extends SourceTask {
         getSource().visit(relativeFileCollector);
         TwirlCompileSpec spec = new DefaultTwirlCompileSpec(relativeFileCollector.relativeFiles, getOutputDirectory(), getForkOptions(), useJavaDefaults());
         if (!inputs.isIncremental()) {
-            if (compiler == null) {
-                compiler = new CleaningPlayToolCompiler<TwirlCompileSpec>(getCompiler(spec), getOutputs());
-            }
-            compiler.execute(spec);
+            new CleaningPlayToolCompiler<TwirlCompileSpec>(getCompiler(), getOutputs()).execute(spec);
         } else {
             final Set<File> sourcesToCompile = new HashSet<File>();
             inputs.outOfDate(new Action<InputFileDetails>() {
@@ -129,16 +119,13 @@ public class TwirlCompile extends SourceTask {
                 cleaner = new TwirlStaleOutputCleaner(getOutputDirectory());
             }
             cleaner.execute(staleOutputFiles);
-            getCompiler(spec).execute(spec);
+            getCompiler().execute(spec);
         }
     }
 
-    private Compiler<TwirlCompileSpec> getCompiler(TwirlCompileSpec spec) {
-        if (compiler == null) {
-            ToolProvider select = ((PlayToolChainInternal) getToolChain()).select(platform);
-            compiler = select.newCompiler(spec);
-        }
-        return compiler;
+    private Compiler<TwirlCompileSpec> getCompiler() {
+        ToolProvider toolProvider = ((PlayToolChainInternal) getToolChain()).select(platform);
+        return toolProvider.newCompiler(TwirlCompileSpec.class);
     }
 
     private boolean useJavaDefaults() {
@@ -161,6 +148,17 @@ public class TwirlCompile extends SourceTask {
     @Incubating
     @Inject
     public PlayToolChain getToolChain() {
+        // Implementation is generated
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Sets the tool chain that will be used to compile the twirl source.
+     *
+     * @param toolChain The tool chain.
+     */
+    @Incubating
+    public void setToolChain(PlayToolChain toolChain) {
         // Implementation is generated
         throw new UnsupportedOperationException();
     }

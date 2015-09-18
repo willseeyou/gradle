@@ -17,6 +17,7 @@ package org.gradle.groovy.scripts;
 
 import org.codehaus.groovy.ast.ClassNode;
 import org.gradle.api.Action;
+import org.gradle.groovy.scripts.internal.CompileOperation;
 
 /**
  * Compiles a script into a {@code Script} object.
@@ -24,25 +25,10 @@ import org.gradle.api.Action;
 public interface ScriptCompiler {
 
     /**
-     * Sets the parent classloader for the script. Can be null, defaults to the context classloader.
-     */
-    ScriptCompiler setClassloader(ClassLoader classloader);
-
-    /**
-     * Sets the transformer to use to compile the script. Can be null, in which case no transformations are applied to
-     * the script.
-     */
-    ScriptCompiler setTransformer(Transformer transformer);
-
-    ScriptCompiler setVerifier(Action<? super ClassNode> verifier);
-
-    ScriptCompiler setClasspathClosureName(String classpathClosureName);
-
-    /**
      * Compiles the script into a {@code Script} object of the given type.
      *
-     * @returns a {@code ScriptRunner} for the script.
+     * @return a {@code ScriptRunner} for the script.
      * @throws ScriptCompilationException On compilation failure.
      */
-    <T extends Script> ScriptRunner<T> compile(Class<T> scriptType) throws ScriptCompilationException;
+    <T extends Script, M> ScriptRunner<T, M> compile(Class<T> scriptType, CompileOperation<M> extractingTransformer, ClassLoader classloader, Action<? super ClassNode> verifier);
 }

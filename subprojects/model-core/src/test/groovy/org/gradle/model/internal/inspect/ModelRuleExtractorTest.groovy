@@ -15,31 +15,26 @@
  */
 
 package org.gradle.model.internal.inspect
-
-import org.codehaus.groovy.reflection.ClassInfo
 import org.gradle.model.*
-import org.gradle.model.collection.CollectionBuilder
-import org.gradle.model.internal.core.ExtractedModelRule
-import org.gradle.model.internal.core.ModelCreators
-import org.gradle.model.internal.core.ModelPath
-import org.gradle.model.internal.core.ModelReference
+import org.gradle.model.internal.core.*
 import org.gradle.model.internal.core.rule.describe.MethodModelRuleDescriptor
+import org.gradle.model.internal.manage.schema.extract.DefaultConstructableTypesRegistry
 import org.gradle.model.internal.manage.schema.extract.DefaultModelSchemaStore
 import org.gradle.model.internal.manage.schema.extract.InvalidManagedModelElementTypeException
+import org.gradle.model.internal.manage.schema.extract.ModelStoreTestUtils
 import org.gradle.model.internal.registry.DefaultModelRegistry
 import org.gradle.model.internal.registry.ModelRegistry
 import org.gradle.model.internal.type.ModelType
+import org.gradle.test.fixtures.ConcurrentTestUtil
 import org.gradle.util.TextUtil
 import spock.lang.Specification
 import spock.lang.Unroll
-import spock.util.concurrent.PollingConditions
 
 import java.beans.Introspector
 
 class ModelRuleExtractorTest extends Specification {
     ModelRegistry registry = new DefaultModelRegistry(null)
-    def registryMock = Mock(ModelRegistry)
-    def extractor = new ModelRuleExtractor(MethodModelRuleExtractors.coreExtractors(DefaultModelSchemaStore.instance))
+    def extractor = new ModelRuleExtractor(MethodModelRuleExtractors.coreExtractors(DefaultModelSchemaStore.instance, new DefaultNodeInitializerRegistry(DefaultModelSchemaStore.instance, new DefaultConstructableTypesRegistry())))
 
     static class ModelThing {
         final String name
@@ -70,21 +65,27 @@ class ModelRuleExtractorTest extends Specification {
     void registerRules(Class<?> clazz) {
         def rules = extract(clazz)
         rules.each {
-            if (it.type == ExtractedModelRule.Type.CREATOR) {
-                registry.create(it.creator)
-            } else if (it.type == ExtractedModelRule.Type.ACTION) {
-                registry.configure(it.actionRole, it.action)
-            }
+            it.apply(registry, ModelPath.ROOT)
         }
     }
 
     def "can inspect class with simple model creation rule"() {
+        def mockRegistry = Mock(ModelRegistry)
+
         when:
         def rule = extract(SimpleModelCreationRuleInferredName).first()
 
         then:
-        rule.type == ExtractedModelRule.Type.CREATOR
-        rule.creator.path.toString() == "modelPath"
+        rule instanceof ExtractedModelCreator
+
+        when:
+        rule.apply(mockRegistry, ModelPath.ROOT)
+
+        then:
+        1 * mockRegistry.create(_) >> { ModelCreator creator ->
+            assert creator.path.toString() == "modelPath"
+        }
+        0 * _
     }
 
     static class ParameterizedModel extends RuleSource {
@@ -150,7 +151,7 @@ class ModelRuleExtractorTest extends Specification {
 
         then:
         def e = thrown(InvalidModelRuleDeclarationException)
-        e.message == "$HasMultipleRuleAnnotations.name#thing() is not a valid model rule method: can only be one of [annotated with @Model and returning a model element, @annotated with @Model and taking a managed model element, annotated with @Defaults, annotated with @Mutate, annotated with @Finalize, annotated with @Validate]"
+        e.message == "${ModelType.of(HasMultipleRuleAnnotations).simpleName}#thing is not a valid model rule method: can only be one of [annotated with @Model and returning a model element, @annotated with @Model and taking a managed model element, annotated with @Defaults, annotated with @Mutate, annotated with @Finalize, annotated with @Validate]"
     }
 
     static class ConcreteGenericModelType extends RuleSource {
@@ -336,9 +337,9 @@ class ModelRuleExtractorTest extends Specification {
 
         then:
         extractor.extract(MutationAndFinalizeRules)*.action*.descriptor == [
-                MethodModelRuleDescriptor.of(MutationAndFinalizeRules, "finalize1"),
-                MethodModelRuleDescriptor.of(MutationAndFinalizeRules, "mutate1"),
-                MethodModelRuleDescriptor.of(MutationAndFinalizeRules, "mutate3")
+            MethodModelRuleDescriptor.of(MutationAndFinalizeRules, "finalize1"),
+            MethodModelRuleDescriptor.of(MutationAndFinalizeRules, "mutate1"),
+            MethodModelRuleDescriptor.of(MutationAndFinalizeRules, "mutate3")
         ]
 
     }
@@ -370,7 +371,9 @@ class ModelRuleExtractorTest extends Specification {
 
         then:
         InvalidModelRuleDeclarationException e = thrown()
-        e.message == "$RuleSetCreatingAnInterfaceThatIsNotAnnotatedWithManaged.name#bar($NonManaged.name) is not a valid model rule method: a void returning model element creation rule has to take an instance of a managed type as the first argument"
+        e.message == "Declaration of model rule ModelRuleExtractorTest.RuleSetCreatingAnInterfaceThatIsNotAnnotatedWithManaged#bar is invalid."
+        e.cause instanceof ModelTypeInitializationException
+        e.cause.message == "The model node of type: '$NonManaged.name' can not be constructed. The type must be managed (@Managed) or one of the following types [ModelSet<?>, ManagedSet<?>, ModelMap<?>, List, Set]"
     }
 
     static class RuleSourceCreatingAClassAnnotatedWithManaged extends RuleSource {
@@ -385,7 +388,7 @@ class ModelRuleExtractorTest extends Specification {
 
         then:
         InvalidModelRuleDeclarationException e = thrown()
-        e.message == "Declaration of model rule $RuleSourceCreatingAClassAnnotatedWithManaged.name#bar($ManagedAnnotatedClass.name) is invalid."
+        e.message == 'Declaration of model rule ModelRuleExtractorTest.RuleSourceCreatingAClassAnnotatedWithManaged#bar is invalid.'
         e.cause instanceof InvalidManagedModelElementTypeException
         e.cause.message == "Invalid managed model type $ManagedAnnotatedClass.name: must be defined as an interface or an abstract class."
     }
@@ -402,7 +405,7 @@ class ModelRuleExtractorTest extends Specification {
 
         then:
         InvalidModelRuleDeclarationException e = thrown()
-        e.message == "$RuleSourceWithAVoidReturningNoArgumentMethod.name#bar() is not a valid model rule method: a void returning model element creation rule has to take a managed model element instance as the first argument"
+        e.message == 'ModelRuleExtractorTest.RuleSourceWithAVoidReturningNoArgumentMethod#bar is not a valid model rule method: a void returning model element creation rule has to take a managed model element instance as the first argument'
     }
 
     static class RuleSourceCreatingManagedWithNestedPropertyOfInvalidManagedType extends RuleSource {
@@ -424,7 +427,7 @@ class ModelRuleExtractorTest extends Specification {
 
         then:
         InvalidModelRuleDeclarationException e = thrown()
-        e.message == "Declaration of model rule $inspected.name#bar($managedType.name) is invalid."
+        e.message == "Declaration of model rule ${getClass().simpleName}.$inspected.simpleName#bar is invalid."
         e.cause instanceof InvalidManagedModelElementTypeException
         e.cause.message == TextUtil.toPlatformLineSeparators("""Invalid managed model type $invalidTypeName: cannot be a parameterized type.
 The type was analyzed due to the following dependencies:
@@ -452,7 +455,7 @@ ${managedType.name}
 
         then:
         InvalidModelRuleDeclarationException e = thrown()
-        e.message == "Declaration of model rule $RuleSourceCreatingManagedWithNonManageableParent.name#bar($ManagedWithNonManageableParents.name) is invalid."
+        e.message == "Declaration of model rule ${ModelType.of(RuleSourceCreatingManagedWithNonManageableParent).simpleName}#bar is invalid."
         e.cause instanceof InvalidManagedModelElementTypeException
         e.cause.message == TextUtil.toPlatformLineSeparators("""Invalid managed model type $invalidTypeName: cannot be a parameterized type.
 The type was analyzed due to the following dependencies:
@@ -463,20 +466,20 @@ ${ManagedWithNonManageableParents.name}
         invalidTypeName = "$ParametrizedManaged.name<$String.name>"
     }
 
-    static class HasRuleWithUncheckedCollectionBuilder extends RuleSource {
+    static class HasRuleWithUncheckedModelMap extends RuleSource {
         @Model
-        static ModelThing modelPath(CollectionBuilder foo) {
+        static ModelThing modelPath(ModelMap foo) {
             new ModelThing("foo")
         }
     }
 
-    def "error when trying to use collection builder without specifying type param"() {
+    def "error when trying to use model map without specifying type param"() {
         when:
-        registerRules(HasRuleWithUncheckedCollectionBuilder)
+        registerRules(HasRuleWithUncheckedModelMap)
 
         then:
         InvalidModelRuleDeclarationException e = thrown()
-        e.message == "$HasRuleWithUncheckedCollectionBuilder.name#modelPath(org.gradle.model.collection.CollectionBuilder) is not a valid model rule method: raw type org.gradle.model.collection.CollectionBuilder used for parameter 1 (all type parameters must be specified of parameterized type)"
+        e.message == "$HasRuleWithUncheckedModelMap.name#modelPath(org.gradle.model.ModelMap) is not a valid model rule method: raw type org.gradle.model.ModelMap used for parameter 1 (all type parameters must be specified of parameterized type)"
     }
 
     def "extracted rules are cached"() {
@@ -513,7 +516,7 @@ ${ManagedWithNonManageableParents.name}
         source = null
 
         then:
-        new PollingConditions(timeout: 10).eventually {
+        ConcurrentTestUtil.poll(10) {
             System.gc()
             extractor.cache.cleanUp()
             extractor.cache.size() == 0
@@ -521,11 +524,7 @@ ${ManagedWithNonManageableParents.name}
     }
 
     private void forcefullyClearReferences(Class<?> clazz) {
-        // Remove soft references (dependent on Groovy internals)
-        def f = ClassInfo.getDeclaredField("globalClassSet")
-        f.setAccessible(true)
-        ClassInfo.ClassInfoSet globalClassSet = f.get(null) as ClassInfo.ClassInfoSet
-        globalClassSet.remove(clazz)
+        ModelStoreTestUtils.removeClassFromGlobalClassSet(clazz)
 
         // Remove soft references
         Introspector.flushFromCaches(clazz)

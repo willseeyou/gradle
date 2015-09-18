@@ -16,52 +16,47 @@
 
 package org.gradle.model.internal.registry;
 
+import org.gradle.api.Action;
 import org.gradle.model.internal.core.ModelAction;
-import org.gradle.model.internal.core.ModelActionRole;
-import org.gradle.model.internal.core.ModelPath;
-import org.gradle.model.internal.core.ModelReference;
 
 import java.util.Collection;
+import java.util.List;
 
-public class MutatorRuleBinder<T> extends RuleBinder {
-
-    private ModelBinding<T> subjectBinding;
-    private final ModelReference<T> subjectReference;
-    private final ModelActionRole role;
+class MutatorRuleBinder<T> extends RuleBinder {
+    private ModelBinding subjectBinding;
     private final ModelAction<T> action;
 
-    public MutatorRuleBinder(ModelReference<T> subjectReference, ModelActionRole role, ModelAction<T> action, ModelPath scope, Collection<RuleBinder> binders) {
-        super(action.getInputs(), action.getDescriptor(), scope, binders);
-        this.subjectReference = subjectReference;
-        this.role = role;
+    public MutatorRuleBinder(final BindingPredicate subjectReference, List<BindingPredicate> inputs, ModelAction<T> action, Collection<RuleBinder> binders) {
+        super(subjectReference, inputs, action.getDescriptor(), binders);
+        subjectBinding = binding(subjectReference, true, new Action<ModelBinding>() {
+            @Override
+            public void execute(ModelBinding modelBinding) {
+                ModelNodeInternal node = modelBinding.getNode();
+                BindingPredicate predicate = modelBinding.getPredicate();
+                if (predicate.getState() != null && node.getState().compareTo(predicate.getState()) >= 0) {
+                    throw new IllegalStateException(String.format("Cannot add rule %s for model element '%s' at state %s as this element is already at state %s.",
+                        modelBinding.referrer,
+                        node.getPath(),
+                        predicate.getState().previous(),
+                        node.getState()
+                    ));
+                }
+                maybeFire();
+            }
+        });
         this.action = action;
-    }
-
-    public ModelActionRole getRole() {
-        return role;
     }
 
     public ModelAction<T> getAction() {
         return action;
     }
 
-    public ModelReference<T> getSubjectReference() {
-        return subjectReference;
-    }
-
-    public ModelBinding<T> getSubjectBinding() {
+    public ModelBinding getSubjectBinding() {
         return subjectBinding;
-    }
-
-    public void bindSubject(ModelNodeInternal modelNode) {
-        assert this.subjectBinding == null;
-        this.subjectBinding = RuleBinder.bind(subjectReference, modelNode);
-        maybeFire();
     }
 
     @Override
     public boolean isBound() {
-        return subjectBinding != null && super.isBound();
+        return subjectBinding != null && subjectBinding.isBound() && super.isBound();
     }
-
 }

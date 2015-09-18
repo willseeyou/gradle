@@ -16,15 +16,13 @@
 
 package org.gradle.model
 
+import org.gradle.api.reporting.model.ModelReportOutput
 import org.gradle.integtests.fixtures.AbstractIntegrationSpec
 import org.gradle.util.TextUtil
 
 class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
     def setup() {
         buildFile << """
-            import org.gradle.model.*
-            import org.gradle.model.collection.*
-
             class MessageTask extends DefaultTask {
                 String message = "default"
 
@@ -50,7 +48,7 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
                 }
 
                 @Mutate
-                void addTasks(CollectionBuilder<Task> tasks, MyModel myModel) {
+                void addTasks(ModelMap<Task> tasks, MyModel myModel) {
                     myModel.tasks.each { n ->
                         tasks.create(n) {
                           description = "task \$n"
@@ -118,7 +116,7 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
                 }
 
                 @Mutate
-                void addTasks(CollectionBuilder<Task> tasks, MyMessage myMessage) {
+                void addTasks(ModelMap<Task> tasks, MyMessage myMessage) {
                     ['foo', 'bar'].each { n ->
                         tasks.create(n, MessageTask) {
                             message = "\${myMessage.message} \${name}: "
@@ -181,7 +179,7 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
                 }
 
                 @Mutate
-                void addTasks(CollectionBuilder<MessageTask> tasks, MyMessage myMessage) {
+                void addTasks(ModelMap<MessageTask> tasks, MyMessage myMessage) {
                     tasks.create('bar') {
                         message += myMessage.message
                     }
@@ -218,7 +216,7 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
                 }
 
                 @Mutate
-                void addTasks(CollectionBuilder<Task> tasks) {
+                void addTasks(ModelMap<Task> tasks) {
                     ['foo', 'bar'].each { n ->
                         tasks.create(n, MessageTask)
                     }
@@ -232,11 +230,11 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
         fails "bar"
 
         then:
-        failure.assertHasCause('Exception thrown while executing model rule: MyPlugin#checkTask(MessageTask)')
+        failure.assertHasCause('Exception thrown while executing model rule: MyPlugin#checkTask')
         failure.assertHasCause('task is invalid!')
     }
 
-    def "can use CollectionBuilder API from a method rule to apply rules to tasks"() {
+    def "can use ModelMap API from a method rule to apply rules to tasks"() {
         given:
         buildFile << """
             class MyMessage {
@@ -250,7 +248,7 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
                 }
 
                 @Mutate
-                void addTasks(CollectionBuilder<MessageTask> tasks) {
+                void addTasks(ModelMap<MessageTask> tasks) {
                     ['foo', 'bar'].each { n ->
                         tasks.create(n, MessageTask) {
                             message = "\$message \$name"
@@ -259,7 +257,7 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
                 }
 
                 @Defaults
-                void applyMessages(CollectionBuilder<MessageTask> tasks, MyMessage myMessage) {
+                void applyMessages(ModelMap<MessageTask> tasks, MyMessage myMessage) {
                     tasks.beforeEach {
                         message = myMessage.message
                     }
@@ -272,7 +270,7 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
                 }
 
                 @Mutate
-                void cleanupMessages(CollectionBuilder<MessageTask> tasks) {
+                void cleanupMessages(ModelMap<MessageTask> tasks) {
                     tasks.named('bar') {
                         message = "[\$message]"
                     }
@@ -301,7 +299,7 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
         buildFile << """
             class MyPlugin extends RuleSource {
                 @Mutate
-                void addTasks(CollectionBuilder<MessageTask> tasks) {
+                void addTasks(ModelMap<MessageTask> tasks) {
                     ['foo', 'bar'].each { n ->
                         tasks.create(n, MessageTask) {
                             message = "\$message \$name"
@@ -342,7 +340,7 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
         buildFile << """
             class MyPlugin extends RuleSource {
                 @Mutate
-                void applyMessages(CollectionBuilder<MessageTask> tasks) {
+                void applyMessages(ModelMap<MessageTask> tasks) {
                     tasks.afterEach {
                         message += " message!"
                     }
@@ -368,7 +366,7 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
         buildFile << """
             class MyPlugin extends RuleSource {
                 @Mutate
-                void addTasks(CollectionBuilder<MessageTask> tasks) {
+                void addTasks(ModelMap<MessageTask> tasks) {
                     tasks.create("foo") {
                         message = "foo message"
                     }
@@ -394,7 +392,7 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
         buildFile << """
             class MyPlugin extends RuleSource {
                 @Mutate
-                void addTasks(CollectionBuilder<Task> tasks) {
+                void addTasks(ModelMap<Task> tasks) {
                     tasks.create("foo")
                     tasks.create("bar")
                 }
@@ -425,7 +423,7 @@ class TaskCreationIntegrationTest extends AbstractIntegrationSpec {
 
             class MyPlugin extends RuleSource {
                 @Mutate
-                void addTasks(CollectionBuilder<SomeTask> tasks) {
+                void addTasks(ModelMap<SomeTask> tasks) {
                     tasks.create("foo") {
                         println "\$name configured"
                     }
@@ -470,7 +468,7 @@ foo configured
                 }
 
                 @Mutate
-                void addTasks1(CollectionBuilder<Task> tasks, MyModel myModel) {
+                void addTasks1(ModelMap<Task> tasks, MyModel myModel) {
                     myModel.tasks.each { n ->
                         tasks.create(n) {
                           description = "task \$n"
@@ -479,7 +477,7 @@ foo configured
                 }
 
                 @Mutate
-                void addTasks2(CollectionBuilder<Task> tasks, MyModel myModel) {
+                void addTasks2(ModelMap<Task> tasks, MyModel myModel) {
                     myModel.tasks.each { n ->
                         tasks.create(n) {
                           description = "task \$n"
@@ -501,8 +499,8 @@ foo configured
         fails "tasks"
 
         then:
-        failure.assertHasCause("Exception thrown while executing model rule: MyPlugin#addTasks2(org.gradle.model.collection.CollectionBuilder<org.gradle.api.Task>, MyModel)")
-        failure.assertHasCause("Cannot create 'tasks.a' using creation rule 'MyPlugin#addTasks2(org.gradle.model.collection.CollectionBuilder<org.gradle.api.Task>, MyModel) > create(a)' as the rule 'MyPlugin#addTasks1(org.gradle.model.collection.CollectionBuilder<org.gradle.api.Task>, MyModel) > create(a)' is already registered to create this model element.")
+        failure.assertHasCause("Exception thrown while executing model rule: MyPlugin#addTasks2")
+        failure.assertHasCause("Cannot create 'tasks.a' using creation rule 'MyPlugin#addTasks2 > create(a)' as the rule 'MyPlugin#addTasks1 > create(a)' is already registered to create this model element.")
     }
 
     def "cannot create tasks during config of task"() {
@@ -510,7 +508,7 @@ foo configured
         buildFile << """
             class MyPlugin extends RuleSource {
                 @Mutate
-                void addTasks(CollectionBuilder<Task> tasks) {
+                void addTasks(ModelMap<Task> tasks) {
                     tasks.create("foo") {
                       tasks.create("bar")
                     }
@@ -524,8 +522,8 @@ foo configured
         fails "tasks"
 
         then:
-        failure.assertHasCause("Exception thrown while executing model rule: MyPlugin#addTasks(org.gradle.model.collection.CollectionBuilder<org.gradle.api.Task>) > create(foo)")
-        failure.assertHasCause("Attempt to mutate closed view of model of type 'org.gradle.model.collection.CollectionBuilder<org.gradle.api.Task>' given to rule 'MyPlugin#addTasks(org.gradle.model.collection.CollectionBuilder<org.gradle.api.Task>)'")
+        failure.assertHasCause("Exception thrown while executing model rule: MyPlugin#addTasks > create(foo)")
+        failure.assertHasCause("Attempt to mutate closed view of model of type 'org.gradle.model.ModelMap<org.gradle.api.Task>' given to rule 'MyPlugin#addTasks'")
     }
 
     def "failure during task instantiation is reasonably reported"() {
@@ -539,7 +537,7 @@ foo configured
 
             class MyPlugin extends RuleSource {
                 @Mutate
-                void addTasks(CollectionBuilder<Task> tasks) {
+                void addTasks(ModelMap<Task> tasks) {
                     tasks.create("foo", Faulty)
                 }
             }
@@ -551,7 +549,7 @@ foo configured
         fails "tasks"
 
         then:
-        failure.assertHasCause("Exception thrown while executing model rule: MyPlugin#addTasks(org.gradle.model.collection.CollectionBuilder<org.gradle.api.Task>)")
+        failure.assertHasCause("Exception thrown while executing model rule: MyPlugin#addTasks > create(foo)")
         failure.assertHasCause("Could not create task of type 'Faulty'")
     }
 
@@ -560,7 +558,7 @@ foo configured
         buildFile << """
             class MyPlugin extends RuleSource {
                 @Mutate
-                void addTasks(CollectionBuilder<Task> tasks) {
+                void addTasks(ModelMap<Task> tasks) {
                     tasks.create("foo") {
                         throw new RuntimeException("config failure")
                     }
@@ -574,7 +572,7 @@ foo configured
         fails "tasks"
 
         then:
-        failure.assertHasCause("Exception thrown while executing model rule: MyPlugin#addTasks(org.gradle.model.collection.CollectionBuilder<org.gradle.api.Task>)")
+        failure.assertHasCause("Exception thrown while executing model rule: MyPlugin#addTasks")
         failure.assertHasCause("config failure")
     }
 
@@ -583,7 +581,7 @@ foo configured
         buildFile << """
             class MyPlugin extends RuleSource {
                 @Mutate
-                void addTasks(CollectionBuilder<Task> tasks) {
+                void addTasks(ModelMap<Task> tasks) {
                     tasks.create("foo")
                 }
             }
@@ -603,7 +601,7 @@ foo configured
         then:
         failure.assertHasCause("Exception thrown while executing model rule: model.tasks.foo")
         failure.assertHasCause("config failure")
-        failure.assertHasLineNumber(25)
+        failure.assertHasLineNumber(22)
     }
 
     def "task created in afterEvaluate() is visible to rules"() {
@@ -644,7 +642,7 @@ foo configured
         buildFile << """
             class MyPlugin extends RuleSource {
                 @Mutate
-                void addTask(CollectionBuilder<Task> tasks) {
+                void addTask(ModelMap<Task> tasks) {
                     tasks.create("foo")
                 }
             }
@@ -658,7 +656,7 @@ foo configured
         fails "foo"
 
         and:
-        failure.assertHasCause("Cannot create 'tasks.foo' using creation rule 'MyPlugin#addTask(org.gradle.model.collection.CollectionBuilder<org.gradle.api.Task>) > create(foo)' as the rule 'Project.<init>.tasks.foo()' is already registered to create this model element.")
+        failure.assertHasCause("Cannot create 'tasks.foo' using creation rule 'MyPlugin#addTask > create(foo)' as the rule 'Project.<init>.tasks.foo()' is already registered to create this model element.")
     }
 
     def "can create task with invalid model space name"() {
@@ -671,5 +669,39 @@ foo configured
 
         then:
         ":." in executedTasks
+    }
+
+    def "proxy classes are never used as task instance nodes types"(){
+        given:
+        buildFile << """
+tasks.create(name: 'taskContainerTask', type: DefaultTask) { }
+
+task standardTask << {}
+
+model {
+  tasks {
+    newModelTask(Task) {}
+  }
+}
+
+class MyPlugin extends RuleSource {
+    @Mutate
+    void addTasks(ModelMap<Task> tasks) {
+        tasks.create('modelMapTask') {}
+    }
+}
+apply type: MyPlugin
+"""
+
+        when:
+        succeeds("model")
+
+        then:
+        def tasksNode = ModelReportOutput.from(output).modelNode.tasks
+        tasksNode.taskContainerTask.@type[0] == 'org.gradle.api.DefaultTask'
+        tasksNode.standardTask.@type[0] == 'org.gradle.api.DefaultTask'
+        tasksNode.newModelTask.@type[0] == 'org.gradle.api.Task'
+        tasksNode.modelMapTask.@type[0] == 'org.gradle.api.Task'
+        tasksNode.model.@type[0] == 'org.gradle.api.reporting.model.ModelReport' //Placeholder task
     }
 }

@@ -16,40 +16,80 @@
 
 package org.gradle.api.tasks.compile
 
-import org.gradle.integtests.fixtures.AbstractHttpDependencyResolutionTest
-import spock.lang.Ignore
+import com.google.common.collect.Iterables
+import org.gradle.integtests.fixtures.AbstractIntegrationSpec
+import org.gradle.integtests.fixtures.AvailableJavaHomes
+import org.gradle.integtests.fixtures.executer.GradleContextualExecuter
+import org.gradle.internal.jvm.JavaHomeException
+import org.gradle.internal.jvm.JavaInfo
+import org.gradle.util.TextUtil
+import spock.lang.IgnoreIf
 import spock.lang.Issue
 
-class JavaCompileParallelIntegrationTest extends AbstractHttpDependencyResolutionTest {
-    @Ignore
+@IgnoreIf({ //noinspection UnnecessaryQualifiedReference
+    GradleContextualExecuter.parallel || JavaCompileParallelIntegrationTest.availableJdksWithJavac().size() < 2
+})
+class JavaCompileParallelIntegrationTest extends AbstractIntegrationSpec {
+
+    static List<JavaInfo> availableJdksWithJavac() {
+        AvailableJavaHomes.availableJdks.findAll {
+            try {
+                if (it.javacExecutable) {
+                    return true
+                }
+            }
+            catch (JavaHomeException ignore) {
+                // ignore
+            }
+            false
+        }
+    }
+
     @Issue("https://issues.gradle.org/browse/GRADLE-3029")
     def "system property java.home is not modified across compile task boundaries"() {
-        def module = mavenHttpRepo.module('foo', 'bar')
-        module.publish()
         def projectNames = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+        def jdks = Iterables.cycle(availableJdksWithJavac()*.javacExecutable.collect(TextUtil.&escapeString)).iterator()
 
-        file('settings.gradle') << "include ${projectNames.collect { "'$it'" }.join(', ')}"
-        file('build.gradle') << """
+        settingsFile << "include ${projectNames.collect { "'$it'" }.join(', ')}"
+        buildFile << """
             subprojects {
                 apply plugin: 'java'
 
                 repositories {
-                    maven { url '${mavenHttpRepo.uri}' }
+                    mavenCentral()
                 }
 
                 dependencies {
-                    compile 'foo:bar:1.0'
+                    compile 'commons-lang:commons-lang:2.5'
                 }
             }
 """
 
         projectNames.each { projectName ->
-            file("${projectName}/src/main/java/Foo.java") << 'public class Foo { }'
+            buildFile << """
+project(':$projectName') {
+    tasks.withType(JavaCompile) {
+        options.with {
+            fork = true
+            forkOptions.executable = "${jdks.next()}"
+        }
+    }
+}
+"""
+            file("${projectName}/src/main/java/Foo.java") << """
+import org.apache.commons.lang.StringUtils;
+
+public class Foo {
+    public String capitalize(String str) {
+        return StringUtils.capitalize(str);
+    }
+}
+"""
         }
 
         when:
-        module.pom.allowGetOrHead()
-        module.artifact.allowGetOrHead()
+        args('--parallel')
+        args('--max-workers=4')
         run('compileJava')
 
         then:

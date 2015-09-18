@@ -25,9 +25,9 @@ import org.gradle.language.javascript.JavaScriptSourceSet;
 import org.gradle.language.scala.ScalaLanguageSourceSet;
 import org.gradle.platform.base.binary.BaseBinarySpec;
 import org.gradle.platform.base.internal.BinaryBuildAbility;
-import org.gradle.platform.base.internal.CompositeBuildAbility;
 import org.gradle.platform.base.internal.ToolSearchBuildAbility;
 import org.gradle.play.JvmClasses;
+import org.gradle.play.PlayApplicationSpec;
 import org.gradle.play.PublicAssets;
 import org.gradle.play.internal.toolchain.PlayToolChainInternal;
 import org.gradle.play.platform.PlayPlatform;
@@ -46,11 +46,21 @@ public class DefaultPlayApplicationBinarySpec extends BaseBinarySpec implements 
     private File jarFile;
     private File assetsJarFile;
     private FileCollection classpath;
-    private BinaryBuildAbility buildAbility;
+    private PlayApplicationSpec application;
 
     @Override
     protected String getTypeName() {
         return "Play Application Jar";
+    }
+
+    @Override
+    public PlayApplicationSpec getApplication() {
+        return application;
+    }
+
+    @Override
+    public void setApplication(PlayApplicationSpec application) {
+        this.application = application;
     }
 
     public PlayPlatform getTargetPlatform() {
@@ -114,14 +124,8 @@ public class DefaultPlayApplicationBinarySpec extends BaseBinarySpec implements 
     }
 
     @Override
-    public BinaryBuildAbility getBuildAbility() {
-        if (buildAbility == null) {
-            buildAbility = new CompositeBuildAbility(
-                    super.getBuildAbility(),
-                    new ToolSearchBuildAbility(getToolChain().select(getTargetPlatform()))
-            );
-        }
-        return buildAbility;
+    public BinaryBuildAbility getBinaryBuildAbility() {
+        return new ToolSearchBuildAbility(getToolChain().select(getTargetPlatform()));
     }
 
     private static class DefaultJvmClasses extends AbstractBuildableModelElement implements JvmClasses {

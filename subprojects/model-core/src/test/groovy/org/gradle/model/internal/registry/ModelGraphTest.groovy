@@ -111,7 +111,7 @@ class ModelGraphTest extends Specification {
         def c = node("c")
 
         given:
-        listener.matchPath() >> b.path
+        listener.getPath() >> b.path
         graph.addListener(listener)
 
         when:
@@ -132,7 +132,7 @@ class ModelGraphTest extends Specification {
         def c = node("c")
 
         given:
-        listener.matchPath() >> b.path
+        listener.getPath() >> b.path
         graph.add(a)
         graph.add(b)
         graph.add(c)
@@ -154,7 +154,7 @@ class ModelGraphTest extends Specification {
         def d = node("d")
 
         given:
-        listener.matchParent() >> a.path
+        listener.getParent() >> a.path
         a.links >> [b]
 
         when:
@@ -184,7 +184,7 @@ class ModelGraphTest extends Specification {
         def d = node("d", Long)
 
         given:
-        listener.matchType() >> ModelType.of(String)
+        listener.getType() >> ModelType.of(String)
 
         when:
         graph.add(a)
@@ -208,8 +208,8 @@ class ModelGraphTest extends Specification {
         def d = node("a.d", Long)
 
         given:
-        listener.matchType() >> ModelType.of(String)
-        listener.matchParent() >> a.path
+        listener.getType() >> ModelType.of(String)
+        listener.getParent() >> a.path
         a.links >> [b]
 
         when:
@@ -230,19 +230,19 @@ class ModelGraphTest extends Specification {
         0 * listener.onCreate(_)
     }
 
-    def "notifies listener about a node with matching scope and its children"() {
+    def "notifies listener of node with matching ancestor"() {
         def listener = Mock(ModelCreationListener)
 
-        def a = node("a", String)
-        def b = node("a.b", String)
-        def c = node("a.b.c", String)
-        def d = node("a.b.d", String)
-        def e = node("a.b.e", Integer)
-        def f = node("a.b.c.f", String)
+        def a = node("a")
+        def b = node("a.b")
+        def c = node("a.b.c")
+        def d = node("a.b.d")
+        def e = node("a.b.c.e")
+        def f = node("d")
 
         given:
-        listener.matchType() >> ModelType.of(String)
-        listener.matchScope() >> b.path
+        listener.ancestor >> a.path
+        a.links >> [b]
         b.links >> [c]
 
         when:
@@ -263,7 +263,39 @@ class ModelGraphTest extends Specification {
 
         then:
         1 * listener.onCreate(d)
+        1 * listener.onCreate(e)
         0 * listener.onCreate(_)
+    }
+
+    def "notifies listener of node with root ancestor"() {
+        def listener = Mock(ModelCreationListener)
+
+        def a = node("a")
+        def b = node("a.b")
+        def c = node("a.b.c")
+        def d = node("d")
+
+        given:
+        listener.ancestor >> ModelPath.ROOT
+
+        when:
+        graph.add(a)
+        graph.add(b)
+        graph.addListener(listener)
+
+        then:
+        1 * listener.onCreate(graph.root)
+        1 * listener.onCreate(a)
+        1 * listener.onCreate(b)
+        0 * listener.onCreate(_)
+
+        when:
+        graph.add(c)
+        graph.add(d)
+
+        then:
+        1 * listener.onCreate(c)
+        1 * listener.onCreate(d)
         0 * listener.onCreate(_)
     }
 
@@ -275,8 +307,8 @@ class ModelGraphTest extends Specification {
         def b = node("b")
 
         given:
-        listener2.matchPath() >> b.path
-        listener3.matchPath() >> b.path
+        listener2.getPath() >> b.path
+        listener3.getPath() >> b.path
 
         when:
         graph.add(a)
@@ -304,7 +336,7 @@ class ModelGraphTest extends Specification {
 
         given:
         graph.addListener(listener1)
-        listener2.matchPath() >> b.path
+        listener2.getPath() >> b.path
         graph.addListener(listener2)
 
         when:

@@ -19,7 +19,6 @@ package org.gradle.api.plugins;
 import org.gradle.api.Action;
 import org.gradle.api.Incubating;
 import org.gradle.api.Plugin;
-import org.gradle.api.Task;
 import org.gradle.api.internal.component.BuildableJavaComponent;
 import org.gradle.api.internal.component.ComponentRegistry;
 import org.gradle.api.internal.plugins.DslObject;
@@ -31,8 +30,8 @@ import org.gradle.api.tasks.diagnostics.*;
 import org.gradle.configuration.Help;
 import org.gradle.internal.service.ServiceRegistry;
 import org.gradle.model.Defaults;
+import org.gradle.model.Path;
 import org.gradle.model.RuleSource;
-import org.gradle.model.collection.CollectionBuilder;
 
 import java.util.concurrent.Callable;
 
@@ -53,32 +52,26 @@ public class HelpTasksPlugin implements Plugin<ProjectInternal> {
         final TaskContainerInternal tasks = project.getTasks();
 
         // static classes are used for the actions to avoid implicitly dragging project/tasks into the model registry
+        String projectName = project.toString();
         tasks.addPlaceholderAction(ProjectInternal.HELP_TASK, Help.class, new HelpAction());
-        tasks.addPlaceholderAction(ProjectInternal.PROJECTS_TASK, ProjectReportTask.class, new ProjectReportTaskAction(project.toString()));
-        tasks.addPlaceholderAction(ProjectInternal.TASKS_TASK, TaskReportTask.class, new TaskReportTaskAction(project.toString(), project.getChildProjects().isEmpty()));
-        tasks.addPlaceholderAction(PROPERTIES_TASK, PropertyReportTask.class, new PropertyReportTaskAction(project.toString()));
-        tasks.addPlaceholderAction(DEPENDENCY_INSIGHT_TASK, DependencyInsightReportTask.class, new DependencyInsightReportTaskAction(project.toString()));
-        tasks.addPlaceholderAction(DEPENDENCIES_TASK, DependencyReportTask.class, new DependencyReportTaskAction(project.toString()));
-        tasks.addPlaceholderAction(COMPONENTS_TASK, ComponentReport.class, new ComponentReportAction(project.toString()));
-        tasks.addPlaceholderAction(MODEL_TASK, ModelReport.class, new ModelReportAction(project.toString()));
+        tasks.addPlaceholderAction(ProjectInternal.PROJECTS_TASK, ProjectReportTask.class, new ProjectReportTaskAction(projectName));
+        tasks.addPlaceholderAction(ProjectInternal.TASKS_TASK, TaskReportTask.class, new TaskReportTaskAction(projectName, project.getChildProjects().isEmpty()));
+        tasks.addPlaceholderAction(PROPERTIES_TASK, PropertyReportTask.class, new PropertyReportTaskAction(projectName));
+        tasks.addPlaceholderAction(DEPENDENCY_INSIGHT_TASK, DependencyInsightReportTask.class, new DependencyInsightReportTaskAction(projectName));
+        tasks.addPlaceholderAction(DEPENDENCIES_TASK, DependencyReportTask.class, new DependencyReportTaskAction(projectName));
+        tasks.addPlaceholderAction(COMPONENTS_TASK, ComponentReport.class, new ComponentReportAction(projectName));
+        tasks.addPlaceholderAction(MODEL_TASK, ModelReport.class, new ModelReportAction(projectName));
     }
 
     static class Rules extends RuleSource {
-        static class Rule extends RuleSource {
-            @Defaults
-            void add(DependencyInsightReportTask task, final ServiceRegistry services) {
-                new DslObject(task).getConventionMapping().map("configuration", new Callable<Object>() {
-                    public Object call() {
-                        BuildableJavaComponent javaProject = services.get(ComponentRegistry.class).getMainComponent();
-                        return javaProject == null ? null : javaProject.getCompileDependencies();
-                    }
-                });
-            }
-        }
-
         @Defaults
-        void addDefaultDependenciesReportConfiguration(CollectionBuilder<Task> task, ServiceRegistry serviceRegistry) {
-            task.named(DEPENDENCY_INSIGHT_TASK, Rule.class);
+        void addDefaultDependenciesReportConfiguration(@Path("tasks.dependencyInsight") DependencyInsightReportTask task, final ServiceRegistry services) {
+            new DslObject(task).getConventionMapping().map("configuration", new Callable<Object>() {
+                public Object call() {
+                    BuildableJavaComponent javaProject = services.get(ComponentRegistry.class).getMainComponent();
+                    return javaProject == null ? null : javaProject.getCompileDependencies();
+                }
+            });
         }
     }
 

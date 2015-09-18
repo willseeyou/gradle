@@ -16,6 +16,8 @@
 
 package org.gradle.model.internal.type;
 
+import com.google.common.collect.ImmutableList;
+
 import java.lang.ref.WeakReference;
 
 class ClassTypeWrapper implements TypeWrapper {
@@ -31,7 +33,23 @@ class ClassTypeWrapper implements TypeWrapper {
     }
 
     @Override
-    public String getRepresentation() {
-        return unwrap().getName();
+    public void collectClasses(ImmutableList.Builder<Class<?>> builder) {
+        builder.add(unwrap());
+    }
+
+    @Override
+    public String getRepresentation(boolean full) {
+        if (full) {
+            return unwrap().getName();
+        } else {
+            StringBuffer sb = new StringBuffer();
+            Class<?> clazz = unwrap();
+            sb.append(clazz.getSimpleName());
+            for (Class<?> c = clazz.getEnclosingClass(); c != null; c = c.getEnclosingClass()) {
+                sb.insert(0, '.');
+                sb.insert(0, c.getSimpleName());
+            }
+            return sb.toString();
+        }
     }
 }

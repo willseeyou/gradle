@@ -15,9 +15,12 @@
  */
 package org.gradle.api.dsl
 
+import org.gradle.api.Plugin
 import org.gradle.api.plugins.AppliedPlugin
 import org.gradle.integtests.fixtures.AbstractIntegrationSpec
+import org.gradle.test.fixtures.file.LeaksFileHandles
 import org.gradle.test.fixtures.plugin.PluginBuilder
+import spock.lang.Issue
 import spock.lang.Unroll
 
 /**
@@ -48,7 +51,7 @@ class PluginDetectionIntegrationTest extends AbstractIntegrationSpec {
             assert pluginManager.hasPlugin("$detectedBy")
             assert pluginManager.findPlugin("$detectedBy").id == "$detectedBy"
 
-            task verify << { assert operations == ['applying', 'withPlugin', 'withId for JavaPlugin', 'applied'] }
+            task verify << { assert operations == ['applying', 'withId for JavaPlugin', 'withPlugin', 'applied'] }
         """
 
         expect:
@@ -59,6 +62,7 @@ class PluginDetectionIntegrationTest extends AbstractIntegrationSpec {
         detectedBy << JAVA_PLUGIN_IDS + JAVA_PLUGIN_IDS.reverse()
     }
 
+    @LeaksFileHandles
     def "unqualified ids from classpath are detectable"() {
         def pluginBuilder = new PluginBuilder(testDirectory)
         pluginBuilder.addPlugin("")
@@ -97,4 +101,131 @@ class PluginDetectionIntegrationTest extends AbstractIntegrationSpec {
         expect:
         run("verify")
     }
+
+    def "plugin manager with id is fired after the plugin is applied for imperative plugins"() {
+        when:
+        buildFile << """
+            pluginManager.withPlugin("java") {
+              assert tasks.jar
+            }
+
+            apply plugin: "java"
+        """
+
+        then:
+        succeeds "tasks"
+    }
+
+    def "plugin manager with id is fired after the plugin is applied for hybrid plugins"() {
+        when:
+        file("buildSrc/src/main/groovy/MyPlugin.groovy") << """
+            import org.gradle.api.Plugin
+            import org.gradle.api.Task
+            import org.gradle.model.*
+
+            class MyPlugin implements Plugin {
+                void apply(project) {
+                  project.tasks.create("imperative-sentinel")
+                }
+
+                static class Rules extends RuleSource {
+                    @Model String thing() {
+                        "foo"
+                    }
+                }
+            }
+        """
+
+        file("buildSrc/src/main/resources/META-INF/gradle-plugins/my.properties") << "implementation-class=MyPlugin"
+
+        buildFile << """
+            import org.gradle.model.internal.core.ModelPath
+
+            pluginManager.withPlugin("my") {
+              assert tasks."imperative-sentinel"
+              // note: modelRegistry property is internal on project
+              assert modelRegistry.node(ModelPath.path("thing")) != null
+            }
+
+            pluginManager.apply(MyPlugin)
+        """
+
+        then:
+        succeeds "tasks"
+    }
+
+    def "plugin manager with id is fired after the plugin is applied for rule plugins"() {
+        when:
+        file("buildSrc/src/main/groovy/MyPlugin.groovy") << """
+            import org.gradle.model.*
+
+            class Rules extends RuleSource {
+                @Model String thing() {
+                    "foo"
+                }
+            }
+        """
+
+        file("buildSrc/src/main/resources/META-INF/gradle-plugins/my.properties") << "implementation-class=Rules"
+
+        buildFile << """
+            import org.gradle.model.internal.core.ModelPath
+
+            pluginManager.withPlugin("my") {
+              // note: modelRegistry property is internal on project
+              assert modelRegistry.node(ModelPath.path("thing")) != null
+            }
+
+            pluginManager.apply("my")
+        """
+
+        then:
+        succeeds "tasks"
+    }
+
+    @Issue("http://discuss.gradle.org/t/concurrentmodification-exception-on-java-8-for-plugins-withid-with-gradle-2-4/8928")
+    def "can nest detection"() {
+        // Actual plugins in use here are insignificant
+        when:
+        file("buildSrc/src/main/groovy/PluginA.groovy") << """
+            class PluginA implements $Plugin.name {
+                void apply(project) {}
+            }
+        """
+        file("buildSrc/src/main/resources/META-INF/gradle-plugins/a.properties") << "implementation-class=PluginA"
+
+        file("buildSrc/src/main/groovy/PluginB.groovy") << """
+            class PluginB implements $Plugin.name {
+                void apply(project) {}
+            }
+        """
+        file("buildSrc/src/main/resources/META-INF/gradle-plugins/b.properties") << "implementation-class=PluginB"
+
+        file("buildSrc/src/main/groovy/PluginC.groovy") << """
+            class PluginC implements $Plugin.name {
+                void apply(project) {}
+            }
+        """
+        file("buildSrc/src/main/resources/META-INF/gradle-plugins/c.properties") << "implementation-class=PluginC"
+
+        buildScript """
+            class ExamplePlugin implements Plugin<Project> {
+                void apply(final Project project) {
+                    project.plugins.withId('a') {
+                        project.plugins.hasPlugin('b')
+                    }
+                    project.plugins.withId('c') {
+                        project.plugins.hasPlugin('b')
+                    }
+                }
+            }
+
+            apply plugin: ExamplePlugin
+            apply plugin: "a"
+        """
+
+        then:
+        succeeds "help"
+    }
+
 }

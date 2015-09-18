@@ -28,10 +28,9 @@ class Antlr2PluginIntegrationTest extends AbstractAntlrIntegrationTest {
         expect:
         succeeds("generateGrammarSource")
         assertAntlrVersion(2)
-        file("build/generated-src/antlr/main/TestGrammar.java").exists()
-        file("build/generated-src/antlr/main/TestGrammar.smap").exists()
-        file("build/generated-src/antlr/main/TestGrammarTokenTypes.java").exists()
-        file("build/generated-src/antlr/main/TestGrammarTokenTypes.txt").exists()
+        assertGrammarSourceGenerated("org/acme/TestGrammar")
+        assertGrammarSourceGenerated("org/acme/AnotherGrammar")
+        assertGrammarSourceGenerated("UnpackagedGrammar")
         succeeds("build")
     }
 
@@ -68,17 +67,23 @@ Execution failed for task ':generateGrammarSource'.
         expect:
         succeeds("generateGrammarSource")
         assertAntlrVersion(2)
-        file("build/generated-src/antlr/main/TestGrammar.java").exists()
-        file("build/generated-src/antlr/main/TestGrammar.smap").exists()
-        file("build/generated-src/antlr/main/TestGrammarTokenTypes.java").exists()
-        file("build/generated-src/antlr/main/TestGrammarTokenTypes.txt").exists()
+        assertGrammarSourceGenerated("org/acme/TestGrammar")
+        assertGrammarSourceGenerated("org/acme/AnotherGrammar")
+        assertGrammarSourceGenerated("UnpackagedGrammar")
+
         succeeds("build")
     }
 
     private goodGrammar() {
-        file("src/main/antlr/TestGrammar.g") << """class TestGrammar extends Parser;
+        file("src/main/antlr/TestGrammar.g") << """
+            header {
+                package org.acme;
+            }
+
+            class TestGrammar extends Parser;
+
             options {
-                buildAST = true; 
+                buildAST = true;
             }
 
             expr:   mexpr (PLUS^ mexpr)* SEMI!
@@ -90,6 +95,42 @@ Execution failed for task ':generateGrammarSource'.
 
             atom:   INT
                 ;"""
+
+        file("src/main/antlr/AnotherGrammar.g") << """
+            header {
+                package org.acme;
+            }
+            class AnotherGrammar extends Parser;
+            options {
+                buildAST = true;
+                importVocab = TestGrammar;
+            }
+
+            expr:   mexpr (PLUS^ mexpr)* SEMI!
+                ;
+
+            mexpr
+                :   atom (STAR^ atom)*
+                ;
+
+            atom:   INT
+                ;"""
+
+        file("src/main/antlr/UnpackagedGrammar.g") << """class UnpackagedGrammar extends Parser;
+            options {
+                buildAST = true;
+            }
+
+            expr:   mexpr (PLUS^ mexpr)* SEMI!
+                ;
+
+            mexpr
+                :   atom (STAR^ atom)*
+                ;
+
+            atom:   INT
+                ;"""
+
     }
 
     private goodProgram() {
@@ -97,6 +138,7 @@ Execution failed for task ':generateGrammarSource'.
             import antlr.Token;
             import antlr.TokenStream;
             import antlr.TokenStreamException;
+            import org.acme.TestGrammar;
 
             public class Test {
                 public static void main(String[] args) {
@@ -127,5 +169,12 @@ Execution failed for task ':generateGrammarSource'.
 
             atom:   INT
                 ;"""
+    }
+
+    private void assertGrammarSourceGenerated(String grammarName) {
+        assert file("build/generated-src/antlr/main/${grammarName}.java").exists()
+        assert file("build/generated-src/antlr/main/${grammarName}.smap").exists()
+        assert file("build/generated-src/antlr/main/${grammarName}TokenTypes.java").exists()
+        assert file("build/generated-src/antlr/main/${grammarName}TokenTypes.txt").exists()
     }
 }

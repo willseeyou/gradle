@@ -17,6 +17,7 @@
 package org.gradle.internal.operations
 
 import org.gradle.api.GradleException
+import org.gradle.internal.concurrent.DefaultExecutorFactory
 import spock.lang.Specification
 import spock.lang.Unroll
 
@@ -24,15 +25,18 @@ import java.util.concurrent.CountDownLatch
 
 class DefaultBuildOperationProcessorTest extends Specification {
 
+
+    public static final String LOG_LOCATION = "<log location>"
+
     @Unroll
     def "all #operations operations run to completion when using #maxThreads threads"() {
         given:
-        def buildOperationProcessor = new DefaultBuildOperationProcessor(maxThreads)
-        def operation = Mock(Runnable)
-        def worker = new DefaultOperationQueueTest.SimpleWorker()
+        def buildOperationProcessor = new DefaultBuildOperationProcessor(new DefaultExecutorFactory(), maxThreads)
+        def operation = Mock(DefaultBuildOperationQueueTest.TestBuildOperation)
+        def worker = new DefaultBuildOperationQueueTest.SimpleWorker()
 
         when:
-        def queue = buildOperationProcessor.newQueue(worker)
+        def queue = buildOperationProcessor.newQueue(worker, LOG_LOCATION)
         operations.times { queue.add(operation) }
         and:
         queue.waitForCompletion()
@@ -57,21 +61,21 @@ class DefaultBuildOperationProcessorTest extends Specification {
     def "all work run to completion for multiple queues when using multiple threads #maxThreads"() {
         given:
         def amountOfWork = 10
-        def worker = new DefaultOperationQueueTest.SimpleWorker()
-        def buildOperationProcessor = new DefaultBuildOperationProcessor(maxThreads)
+        def worker = new DefaultBuildOperationQueueTest.SimpleWorker()
+        def buildOperationProcessor = new DefaultBuildOperationProcessor(new DefaultExecutorFactory(), maxThreads)
         def queues = [
-                buildOperationProcessor.newQueue(worker),
-                buildOperationProcessor.newQueue(worker),
-                buildOperationProcessor.newQueue(worker),
-                buildOperationProcessor.newQueue(worker),
-                buildOperationProcessor.newQueue(worker),
+                buildOperationProcessor.newQueue(worker, LOG_LOCATION),
+                buildOperationProcessor.newQueue(worker, LOG_LOCATION),
+                buildOperationProcessor.newQueue(worker, LOG_LOCATION),
+                buildOperationProcessor.newQueue(worker, LOG_LOCATION),
+                buildOperationProcessor.newQueue(worker, LOG_LOCATION),
         ]
         def operations = [
-                Mock(Runnable),
-                Mock(Runnable),
-                Mock(Runnable),
-                Mock(Runnable),
-                Mock(Runnable),
+                Mock(DefaultBuildOperationQueueTest.TestBuildOperation),
+                Mock(DefaultBuildOperationQueueTest.TestBuildOperation),
+                Mock(DefaultBuildOperationQueueTest.TestBuildOperation),
+                Mock(DefaultBuildOperationQueueTest.TestBuildOperation),
+                Mock(DefaultBuildOperationQueueTest.TestBuildOperation),
         ]
 
         when:
@@ -102,14 +106,14 @@ class DefaultBuildOperationProcessorTest extends Specification {
         given:
         def amountOfWork = 10
         def maxThreads = 4
-        def buildOperationProcessor = new DefaultBuildOperationProcessor(maxThreads)
-        def success = Stub(Runnable)
-        def failure = Stub(Runnable) {
+        def buildOperationProcessor = new DefaultBuildOperationProcessor(new DefaultExecutorFactory(), maxThreads)
+        def success = Stub(DefaultBuildOperationQueueTest.TestBuildOperation)
+        def failure = Stub(DefaultBuildOperationQueueTest.TestBuildOperation) {
             run() >> { throw new Exception() }
         }
-        def worker = new DefaultOperationQueueTest.SimpleWorker()
-        def successfulQueue = buildOperationProcessor.newQueue(worker)
-        def failedQueue = buildOperationProcessor.newQueue(worker)
+        def worker = new DefaultBuildOperationQueueTest.SimpleWorker()
+        def successfulQueue = buildOperationProcessor.newQueue(worker, LOG_LOCATION)
+        def failedQueue = buildOperationProcessor.newQueue(worker, LOG_LOCATION)
 
         amountOfWork.times {
             successfulQueue.add(success)
@@ -129,30 +133,14 @@ class DefaultBuildOperationProcessorTest extends Specification {
         thrown MultipleBuildOperationFailures
     }
 
-    @Unroll
-    def "converts parallel-threads=#count into usable number of threads (#expected)"() {
-        given:
-        def buildOperationProcessor = new DefaultBuildOperationProcessor(count)
-
-        expect:
-        expected == buildOperationProcessor.actualThreadCount(count)
-
-        where:
-        count | expected
-        -1    | Runtime.getRuntime().availableProcessors()
-        0     | 1
-        1     | 1
-        8     | 8
-    }
-
     def "multiple failures get reported"() {
         given:
         def threadCount = 4
-        def buildOperationProcessor = new DefaultBuildOperationProcessor(threadCount)
-        def worker = new DefaultOperationQueueTest.SimpleWorker()
-        def queue = buildOperationProcessor.newQueue(worker)
+        def buildOperationProcessor = new DefaultBuildOperationProcessor(new DefaultExecutorFactory(), threadCount)
+        def worker = new DefaultBuildOperationQueueTest.SimpleWorker()
+        def queue = buildOperationProcessor.newQueue(worker, LOG_LOCATION)
         def startLatch = new CountDownLatch(1)
-        def operation = Stub(Runnable) {
+        def operation = Stub(DefaultBuildOperationQueueTest.TestBuildOperation) {
             run() >> {
                 startLatch.await()
                 throw new GradleException("always fails")

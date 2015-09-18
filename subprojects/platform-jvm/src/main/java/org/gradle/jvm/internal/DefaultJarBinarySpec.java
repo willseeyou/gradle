@@ -16,13 +16,16 @@
 
 package org.gradle.jvm.internal;
 
+import org.gradle.api.artifacts.component.LibraryBinaryIdentifier;
+import org.gradle.internal.component.local.model.DefaultLibraryBinaryIdentifier;
 import org.gradle.jvm.JvmBinaryTasks;
 import org.gradle.jvm.internal.toolchain.JavaToolChainInternal;
 import org.gradle.jvm.platform.JavaPlatform;
 import org.gradle.jvm.toolchain.JavaToolChain;
+import org.gradle.platform.base.BinarySpec;
+import org.gradle.platform.base.ComponentSpec;
 import org.gradle.platform.base.binary.BaseBinarySpec;
 import org.gradle.platform.base.internal.BinaryBuildAbility;
-import org.gradle.platform.base.internal.CompositeBuildAbility;
 import org.gradle.platform.base.internal.ToolSearchBuildAbility;
 
 import java.io.File;
@@ -34,20 +37,31 @@ public class DefaultJarBinarySpec extends BaseBinarySpec implements JarBinarySpe
     private File classesDir;
     private File resourcesDir;
     private File jarFile;
-    private String baseName;
-    private BinaryBuildAbility buildAbility;
+    private ComponentSpec component;
+    private Class<? extends BinarySpec> publicType;
 
     @Override
     protected String getTypeName() {
         return "Jar";
     }
 
-    public String getBaseName() {
-        return baseName == null ? getName() : baseName;
+    @Override
+    public void setComponent(ComponentSpec componentSpec) {
+        this.component = componentSpec;
     }
 
-    public void setBaseName(String baseName) {
-        this.baseName = baseName;
+    @Override
+    public Class<? extends BinarySpec> getPublicType() {
+        return publicType != null ? publicType : super.getPublicType();
+    }
+
+    public void setPublicType(Class<? extends BinarySpec> publicType) {
+        this.publicType = publicType;
+    }
+
+    @Override
+    public LibraryBinaryIdentifier getId() {
+        return new DefaultLibraryBinaryIdentifier(component.getProjectPath(), component.getName(), getName());
     }
 
     public JvmBinaryTasks getTasks() {
@@ -95,13 +109,7 @@ public class DefaultJarBinarySpec extends BaseBinarySpec implements JarBinarySpe
     }
 
     @Override
-    public BinaryBuildAbility getBuildAbility() {
-        if (buildAbility == null) {
-            buildAbility = new CompositeBuildAbility(
-                    super.getBuildAbility(),
-                    new ToolSearchBuildAbility(((JavaToolChainInternal) getToolChain()).select(getTargetPlatform()))
-            );
-        }
-        return buildAbility;
+    protected BinaryBuildAbility getBinaryBuildAbility() {
+        return new ToolSearchBuildAbility(((JavaToolChainInternal) getToolChain()).select(getTargetPlatform()));
     }
 }

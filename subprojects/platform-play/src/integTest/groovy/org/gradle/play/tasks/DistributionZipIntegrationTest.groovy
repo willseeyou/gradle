@@ -18,6 +18,7 @@ package org.gradle.play.tasks
 
 import org.gradle.integtests.fixtures.AbstractIntegrationSpec
 import org.gradle.test.fixtures.archive.ZipTestFixture
+import static org.gradle.play.integtest.fixtures.Repositories.*
 
 class DistributionZipIntegrationTest extends AbstractIntegrationSpec {
     def setup() {
@@ -27,13 +28,7 @@ class DistributionZipIntegrationTest extends AbstractIntegrationSpec {
                 id 'play'
             }
 
-            repositories {
-                jcenter()
-                maven{
-                    name = "typesafe-maven-release"
-                    url = "https://repo.typesafe.com/typesafe/maven-releases"
-                }
-            }
+            ${PLAY_REPOSITORES}
         """
     }
 
@@ -72,7 +67,7 @@ class DistributionZipIntegrationTest extends AbstractIntegrationSpec {
 
         then:
         failureDescriptionContains("A problem occurred configuring root project 'dist-play-app'")
-        failureHasCause("Creating a new Play Distribution (myDist) is not supported.")
+        failureHasCause("Cannot create a Distribution named 'myDist' because this container does not support creating elements by name alone.")
     }
 
     ZipTestFixture zip(String path) {

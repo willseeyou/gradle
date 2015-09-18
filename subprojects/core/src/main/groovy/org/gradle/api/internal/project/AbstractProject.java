@@ -17,7 +17,6 @@
 package org.gradle.api.internal.project;
 
 import com.google.common.collect.Maps;
-import com.google.common.util.concurrent.Runnables;
 import groovy.lang.Closure;
 import groovy.lang.MissingPropertyException;
 import org.gradle.api.*;
@@ -53,20 +52,19 @@ import org.gradle.configuration.ScriptPluginFactory;
 import org.gradle.configuration.project.ProjectConfigurationActionContainer;
 import org.gradle.configuration.project.ProjectEvaluator;
 import org.gradle.groovy.scripts.ScriptSource;
+import org.gradle.internal.Actions;
 import org.gradle.internal.Factory;
+import org.gradle.internal.event.ListenerBroadcast;
 import org.gradle.internal.reflect.Instantiator;
 import org.gradle.internal.service.ServiceRegistry;
 import org.gradle.internal.service.scopes.ServiceRegistryFactory;
 import org.gradle.listener.ClosureBackedMethodInvocationDispatch;
-import org.gradle.listener.ListenerBroadcast;
 import org.gradle.logging.LoggingManagerInternal;
 import org.gradle.logging.StandardOutputCapture;
 import org.gradle.model.dsl.internal.NonTransformedModelDslBacking;
 import org.gradle.model.dsl.internal.TransformedModelDslBacking;
-import org.gradle.model.internal.core.ModelCreator;
-import org.gradle.model.internal.core.ModelCreators;
-import org.gradle.model.internal.core.ModelPath;
-import org.gradle.model.internal.core.ModelReference;
+import org.gradle.model.internal.core.*;
+import org.gradle.model.internal.manage.schema.ModelSchemaStore;
 import org.gradle.model.internal.registry.ModelRegistry;
 import org.gradle.process.ExecResult;
 import org.gradle.process.ExecSpec;
@@ -144,8 +142,6 @@ public abstract class AbstractProject extends AbstractPluginAware implements Pro
 
     private final Path path;
 
-    private Runnable modelRulesBlockRunner = Runnables.doNothing();
-
     public AbstractProject(String name,
                            ProjectInternal parent,
                            File projectDir,
@@ -191,42 +187,47 @@ public abstract class AbstractProject extends AbstractPluginAware implements Pro
     private void populateModelRegistry(ModelRegistry modelRegistry) {
         ModelPath taskFactoryPath = ModelPath.path("taskFactory");
         ModelCreator taskFactoryCreator = ModelCreators.bridgedInstance(ModelReference.of(taskFactoryPath, ITaskFactory.class), services.get(ITaskFactory.class))
-                .descriptor("Project.<init>.taskFactory")
-                .ephemeral(true)
-                .build();
+            .descriptor("Project.<init>.taskFactory")
+            .ephemeral(true)
+            .hidden(true)
+            .build();
 
         modelRegistry.createOrReplace(taskFactoryCreator);
 
         modelRegistry.createOrReplace(
-                ModelCreators.bridgedInstance(ModelReference.of("serviceRegistry", ServiceRegistry.class), services)
-                        .descriptor("Project.<init>.serviceRegistry()")
-                        .ephemeral(true)
-                        .build()
+            ModelCreators.bridgedInstance(ModelReference.of("serviceRegistry", ServiceRegistry.class), services)
+                .descriptor("Project.<init>.serviceRegistry()")
+                .ephemeral(true)
+                .hidden(true)
+                .build()
         );
 
         modelRegistry.createOrReplace(
-                ModelCreators.unmanagedInstance(ModelReference.of("buildDir", File.class), new Factory<File>() {
-                    public File create() {
-                        return getBuildDir();
-                    }
-                })
-                        .descriptor("Project.<init>.buildDir()")
-                        .ephemeral(true)
-                        .build()
+            ModelCreators.unmanagedInstance(ModelReference.of("buildDir", File.class), new Factory<File>() {
+                public File create() {
+                    return getBuildDir();
+                }
+            })
+                .descriptor("Project.<init>.buildDir()")
+                .ephemeral(true)
+                .hidden(true)
+                .build()
         );
 
         modelRegistry.createOrReplace(
-                ModelCreators.bridgedInstance(ModelReference.of("projectIdentifier", ProjectIdentifier.class), this)
-                        .descriptor("Project.<init>.projectIdentifier()")
-                        .ephemeral(true)
-                        .build()
+            ModelCreators.bridgedInstance(ModelReference.of("projectIdentifier", ProjectIdentifier.class), this)
+                .descriptor("Project.<init>.projectIdentifier()")
+                .ephemeral(true)
+                .hidden(true)
+                .build()
         );
 
         modelRegistry.createOrReplace(
-                ModelCreators.bridgedInstance(ModelReference.of("extensions", ExtensionContainer.class), getExtensions())
-                        .descriptor("Project.<init>.extensions()")
-                        .ephemeral(true)
-                        .build()
+            ModelCreators.bridgedInstance(ModelReference.of("extensions", ExtensionContainer.class), getExtensions())
+                .descriptor("Project.<init>.extensions()")
+                .ephemeral(true)
+                .hidden(true)
+                .build()
         );
     }
 
@@ -261,7 +262,7 @@ public abstract class AbstractProject extends AbstractPluginAware implements Pro
 
     public void setScript(groovy.lang.Script buildScript) {
         extensibleDynamicObject.addObject(new BeanDynamicObject(buildScript).withNoProperties().withNotImplementsMissing(),
-                ExtensibleDynamicObject.Location.BeforeConvention);
+            ExtensibleDynamicObject.Location.BeforeConvention);
     }
 
     public ScriptSource getBuildScriptSource() {
@@ -550,17 +551,20 @@ public abstract class AbstractProject extends AbstractPluginAware implements Pro
     private Project evaluationDependsOn(DefaultProject projectToEvaluate) {
         if (projectToEvaluate.getState().getExecuting()) {
             throw new CircularReferenceException(String.format("Circular referencing during evaluation for %s.",
-                    projectToEvaluate));
+                projectToEvaluate));
         }
         return projectToEvaluate.evaluate();
     }
 
     public String toString() {
-        if (parent != null) {
-            return String.format("project '%s'", path);
-        } else {
-            return String.format("root project '%s'", name);
+        StringBuilder builder = new StringBuilder();
+        if (parent == null) {
+            builder.append("root ");
         }
+        builder.append("project '");
+        builder.append(parent == null ? name : path);
+        builder.append("'");
+        return builder.toString();
     }
 
     public Map<Project, Set<Task>> getAllTasks(boolean recursive) {
@@ -585,8 +589,7 @@ public abstract class AbstractProject extends AbstractPluginAware implements Pro
         final Set<Task> foundTasks = new HashSet<Task>();
         Action<Project> action = new Action<Project>() {
             public void execute(Project project) {
-                //in configure-on-demand we don't know if the project was configured, hence explicit evaluate.
-                // Not especially tidy, we should clean this up while working on new configuration model.
+                // Don't force evaluation of rules here, let the task container do what it needs to
                 ((ProjectInternal) project).evaluate();
 
                 Task task = project.getTasks().findByName(name);
@@ -760,7 +763,11 @@ public abstract class AbstractProject extends AbstractPluginAware implements Pro
     }
 
     public CopySpec copySpec(Action<? super CopySpec> action) {
-        return getFileOperations().copySpec(action);
+        return Actions.with(copySpec(), action);
+    }
+
+    public CopySpec copySpec() {
+        return getFileOperations().copySpec();
     }
 
     @Inject
@@ -888,6 +895,18 @@ public abstract class AbstractProject extends AbstractPluginAware implements Pro
         throw new UnsupportedOperationException();
     }
 
+    @Inject
+    protected ModelSchemaStore getModelSchemaStore() {
+        // Decoration takes care of the implementation
+        throw new UnsupportedOperationException();
+    }
+
+    @Inject
+    protected NodeInitializerRegistry getNodeInitializerRegistry() {
+        // Decoration takes care of the implementation
+        throw new UnsupportedOperationException();
+    }
+
     @Override
     protected DefaultObjectConfigurationAction createObjectConfigurationAction() {
         return new DefaultObjectConfigurationAction(getFileResolver(), getScriptPluginFactory(), getScriptHandlerFactory(), getBaseClassLoaderScope(), this);
@@ -945,38 +964,30 @@ public abstract class AbstractProject extends AbstractPluginAware implements Pro
         return (ExtensionContainerInternal) getConvention();
     }
 
-
+    // Not part of the public API
     public void model(Closure<?> modelRules) {
+        ModelRegistry modelRegistry = getModelRegistry();
+        ModelSchemaStore modelSchemaStore = getModelSchemaStore();
+        NodeInitializerRegistry nodeInitializerRegistry = getNodeInitializerRegistry();
         if (TransformedModelDslBacking.isTransformedBlock(modelRules)) {
-            ClosureBackedAction.execute(new TransformedModelDslBacking(getModelRegistry()), modelRules);
+            ClosureBackedAction.execute(new TransformedModelDslBacking(modelRegistry, modelSchemaStore, nodeInitializerRegistry, this.getRootProject().getFileResolver()), modelRules);
         } else {
-            new NonTransformedModelDslBacking(getModelRegistry()).configure(modelRules);
+            new NonTransformedModelDslBacking(modelRegistry, modelSchemaStore, nodeInitializerRegistry).configure(modelRules);
         }
+    }
+
+    @Inject
+    protected DeferredProjectConfiguration getDeferredProjectConfiguration() {
+        // Decoration takes care of the implementation
+        throw new UnsupportedOperationException();
+    }
+
+    public void addDeferredConfiguration(Runnable configuration) {
+        getDeferredProjectConfiguration().add(configuration);
     }
 
     @Override
-    public void setModelRulesBlockRunner(final Runnable modelRulesBlockRunner) {
-        this.modelRulesBlockRunner = new SingleRunRunnable(modelRulesBlockRunner);
-    }
-
-    @Override
-    public void runModelRulesBlock() {
-        modelRulesBlockRunner.run();
-    }
-
-    private static class SingleRunRunnable implements Runnable {
-        private final Runnable runnable;
-        private boolean hasRun;
-
-        public SingleRunRunnable(Runnable runnable) {
-            this.runnable = runnable;
-        }
-
-        public void run() {
-            if (!hasRun) {
-                hasRun = true;
-                runnable.run();
-            }
-        }
+    public void fireDeferredConfiguration() {
+        getDeferredProjectConfiguration().fire();
     }
 }

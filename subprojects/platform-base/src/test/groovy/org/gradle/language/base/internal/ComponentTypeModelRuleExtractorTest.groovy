@@ -16,16 +16,17 @@
 
 package org.gradle.language.base.internal
 
-import org.gradle.internal.reflect.DirectInstantiator
-import org.gradle.internal.reflect.Instantiator
+import org.gradle.language.base.internal.testinterfaces.NotComponentSpec
+import org.gradle.language.base.internal.testinterfaces.SomeComponentSpec
 import org.gradle.language.base.plugins.ComponentModelBasePlugin
 import org.gradle.model.InvalidModelRuleDeclarationException
-import org.gradle.model.internal.core.ExtractedModelRule
-import org.gradle.model.internal.core.ModelActionRole
-import org.gradle.model.internal.core.ModelReference
+import org.gradle.model.internal.core.*
+import org.gradle.model.internal.manage.schema.extract.DefaultModelSchemaStore
+import org.gradle.model.internal.registry.ModelRegistry
+import org.gradle.model.internal.type.ModelType
 import org.gradle.platform.base.*
 import org.gradle.platform.base.component.BaseComponentSpec
-import org.gradle.platform.base.internal.DefaultComponentSpecContainer
+import org.gradle.platform.base.internal.ComponentSpecFactory
 import org.gradle.platform.base.internal.registry.AbstractAnnotationModelRuleExtractorTest
 import org.gradle.platform.base.internal.registry.ComponentTypeModelRuleExtractor
 import spock.lang.Unroll
@@ -33,9 +34,8 @@ import spock.lang.Unroll
 import java.lang.annotation.Annotation
 
 class ComponentTypeModelRuleExtractorTest extends AbstractAnnotationModelRuleExtractorTest {
-    Instantiator instantiator = new DirectInstantiator()
-
-    ComponentTypeModelRuleExtractor ruleHandler = new ComponentTypeModelRuleExtractor(instantiator)
+    final static ModelType<ComponentSpecFactory> FACTORY_REGISTRY_TYPE = ModelType.of(ComponentSpecFactory)
+    ComponentTypeModelRuleExtractor ruleHandler = new ComponentTypeModelRuleExtractor(DefaultModelSchemaStore.getInstance())
 
     @Override
     Class<? extends Annotation> getAnnotation() { return ComponentType }
@@ -43,14 +43,24 @@ class ComponentTypeModelRuleExtractorTest extends AbstractAnnotationModelRuleExt
     Class<?> ruleClass = Rules
 
     def "applies ComponentModelBasePlugin and creates component type rule"() {
+        def mockRegistry = Mock(ModelRegistry)
+
         when:
         def registration = ruleHandler.registration(ruleDefinitionForMethod("validTypeRule"))
 
         then:
+        registration instanceof ExtractedModelAction
         registration.ruleDependencies == [ComponentModelBasePlugin]
-        registration.type == ExtractedModelRule.Type.ACTION
-        registration.actionRole == ModelActionRole.Defaults
-        registration.action.subject == ModelReference.of(DefaultComponentSpecContainer)
+
+        when:
+        registration.apply(mockRegistry, ModelPath.ROOT)
+
+        then:
+        1 * mockRegistry.configure(_, _, _) >> { ModelActionRole role, ModelAction<?> action, ModelPath scope ->
+            assert role == ModelActionRole.Defaults
+            assert action.subject == ModelReference.of(FACTORY_REGISTRY_TYPE)
+        }
+        0 * _
     }
 
     def "applies ComponentModelBasePlugin only when implementation not set"() {
@@ -58,8 +68,8 @@ class ComponentTypeModelRuleExtractorTest extends AbstractAnnotationModelRuleExt
         def registration = ruleHandler.registration(ruleDefinitionForMethod("noImplementationSet"))
 
         then:
+        registration instanceof DependencyOnlyExtractedModelRule
         registration.ruleDependencies == [ComponentModelBasePlugin]
-        registration.type == ExtractedModelRule.Type.DEPENDENCIES
     }
 
     @Unroll
@@ -93,13 +103,11 @@ class ComponentTypeModelRuleExtractorTest extends AbstractAnnotationModelRuleExt
         "noDefaultConstructor"             | "Component implementation '${NoDefaultConstructor.name}' must have public default constructor."                         | "implementation with no public default constructor"
     }
 
-    interface SomeComponentSpec extends ComponentSpec {}
+
 
     static class SomeComponentSpecImpl extends BaseComponentSpec implements SomeComponentSpec {}
 
     static class SomeComponentSpecOtherImpl extends SomeComponentSpecImpl {}
-
-    interface NotComponentSpec {}
 
     static class NotImplementingCustomComponent extends BaseComponentSpec implements ComponentSpec {}
 

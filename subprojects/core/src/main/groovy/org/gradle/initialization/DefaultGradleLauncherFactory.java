@@ -23,21 +23,22 @@ import org.gradle.api.internal.ExceptionAnalyser;
 import org.gradle.api.internal.GradleInternal;
 import org.gradle.api.logging.Logging;
 import org.gradle.api.logging.StandardOutputListener;
-import org.gradle.cache.CacheRepository;
 import org.gradle.configuration.BuildConfigurer;
+import org.gradle.deployment.internal.DeploymentRegistry;
+import org.gradle.execution.BuildConfigurationActionExecuter;
 import org.gradle.execution.BuildExecuter;
-import org.gradle.initialization.buildsrc.BuildSourceBuilder;
-import org.gradle.initialization.layout.BuildLayoutFactory;
+import org.gradle.internal.event.ListenerManager;
 import org.gradle.internal.featurelifecycle.ScriptUsageLocationReporter;
+import org.gradle.internal.progress.BuildOperationExecutor;
 import org.gradle.internal.progress.BuildProgressFilter;
 import org.gradle.internal.progress.BuildProgressLogger;
 import org.gradle.internal.progress.LoggerProvider;
 import org.gradle.internal.reflect.Instantiator;
 import org.gradle.internal.service.ServiceRegistry;
 import org.gradle.internal.service.scopes.BuildScopeServices;
+import org.gradle.internal.service.scopes.BuildSessionScopeServices;
 import org.gradle.internal.service.scopes.ServiceRegistryFactory;
 import org.gradle.invocation.DefaultGradle;
-import org.gradle.listener.ListenerManager;
 import org.gradle.logging.LoggingManagerInternal;
 import org.gradle.logging.ProgressLoggerFactory;
 import org.gradle.logging.StyledTextOutputFactory;
@@ -50,11 +51,11 @@ public class DefaultGradleLauncherFactory implements GradleLauncherFactory {
     private final NestedBuildTracker tracker;
     private final BuildProgressLogger buildProgressLogger;
 
-    public DefaultGradleLauncherFactory(ServiceRegistry globalServices) {
-        sharedServices = globalServices;
+    public DefaultGradleLauncherFactory(ServiceRegistry sharedServices) {
+        this.sharedServices = sharedServices;
         tracker = new NestedBuildTracker();
 
-        // Register default loggers 
+        // Register default loggers
         ListenerManager listenerManager = sharedServices.get(ListenerManager.class);
         buildProgressLogger = new BuildProgressLogger(sharedServices.get(ProgressLoggerFactory.class));
         listenerManager.addListener(new BuildProgressFilter(buildProgressLogger));
@@ -69,26 +70,45 @@ public class DefaultGradleLauncherFactory implements GradleLauncherFactory {
         sharedServices.get(ListenerManager.class).removeListener(listener);
     }
 
-    public DefaultGradleLauncher newInstance(StartParameter startParameter, BuildCancellationToken cancellationToken) {
+    public GradleLauncher newInstance(StartParameter startParameter) {
         BuildRequestMetaData requestMetaData;
+        BuildCancellationToken cancellationToken;
+        BuildEventConsumer buildEventConsumer;
         if (tracker.getCurrentBuild() != null) {
-            requestMetaData = new DefaultBuildRequestMetaData(tracker.getCurrentBuild().getServices().get(BuildClientMetaData.class), System.currentTimeMillis());
+            ServiceRegistry services = tracker.getCurrentBuild().getServices();
+            requestMetaData = new DefaultBuildRequestMetaData(services.get(BuildClientMetaData.class), System.currentTimeMillis());
+            cancellationToken = services.get(BuildCancellationToken.class);
+            buildEventConsumer = services.get(BuildEventConsumer.class);
         } else {
             requestMetaData = new DefaultBuildRequestMetaData(System.currentTimeMillis());
+            cancellationToken = new DefaultBuildCancellationToken();
+            buildEventConsumer = new NoOpBuildEventConsumer();
         }
-        return doNewInstance(startParameter, cancellationToken, requestMetaData);
+
+        final BuildScopeServices buildScopeServices = BuildScopeServices.singleSession(sharedServices, startParameter);
+        return doNewInstance(startParameter, cancellationToken, requestMetaData, buildEventConsumer, buildScopeServices);
     }
 
-    public DefaultGradleLauncher newInstance(StartParameter startParameter, BuildCancellationToken cancellationToken, BuildRequestMetaData requestMetaData) {
+    @Override
+    public GradleLauncher newInstance(StartParameter startParameter, BuildRequestContext requestContext, ServiceRegistry parentRegistry) {
         // This should only be used for top-level builds
         assert tracker.getCurrentBuild() == null;
-        return doNewInstance(startParameter, cancellationToken, requestMetaData);
+
+        if (!(parentRegistry instanceof BuildSessionScopeServices)) {
+            throw new IllegalArgumentException("Service registry must be of build session scope");
+        }
+
+        BuildScopeServices buildScopeServices = BuildScopeServices.forSession((BuildSessionScopeServices) parentRegistry);
+        DefaultGradleLauncher launcher = doNewInstance(startParameter, requestContext.getCancellationToken(), requestContext, requestContext.getEventConsumer(), buildScopeServices);
+        DeploymentRegistry deploymentRegistry = parentRegistry.get(DeploymentRegistry.class);
+        deploymentRegistry.onNewBuild(launcher.getGradle());
+        return launcher;
     }
 
-    private DefaultGradleLauncher doNewInstance(StartParameter startParameter, BuildCancellationToken cancellationToken, BuildRequestMetaData requestMetaData) {
-        final BuildScopeServices serviceRegistry = new BuildScopeServices(sharedServices, startParameter);
+    private DefaultGradleLauncher doNewInstance(StartParameter startParameter, BuildCancellationToken cancellationToken, BuildRequestMetaData requestMetaData, BuildEventConsumer buildEventConsumer, BuildScopeServices serviceRegistry) {
         serviceRegistry.add(BuildRequestMetaData.class, requestMetaData);
         serviceRegistry.add(BuildClientMetaData.class, requestMetaData.getClient());
+        serviceRegistry.add(BuildEventConsumer.class, buildEventConsumer);
         serviceRegistry.add(BuildCancellationToken.class, cancellationToken);
         ListenerManager listenerManager = serviceRegistry.get(ListenerManager.class);
         LoggingManagerInternal loggingManager = serviceRegistry.newInstance(LoggingManagerInternal.class);
@@ -115,28 +135,19 @@ public class DefaultGradleLauncherFactory implements GradleLauncherFactory {
 
         GradleInternal gradle = serviceRegistry.get(Instantiator.class).newInstance(DefaultGradle.class, tracker.getCurrentBuild(), startParameter, serviceRegistry.get(ServiceRegistryFactory.class));
         return new DefaultGradleLauncher(
-                gradle,
-                serviceRegistry.get(InitScriptHandler.class),
-                new SettingsHandler(
-                        new DefaultSettingsFinder(
-                                new BuildLayoutFactory()),
-                        serviceRegistry.get(SettingsProcessor.class),
-                        new BuildSourceBuilder(
-                                this,
-                                cancellationToken,
-                                serviceRegistry.get(ClassLoaderScopeRegistry.class).getCoreAndPluginsScope(),
-                                serviceRegistry.get(CacheRepository.class))
-                ),
-                serviceRegistry.get(BuildLoader.class),
-                serviceRegistry.get(BuildConfigurer.class),
-                gradle.getBuildListenerBroadcaster(),
-                serviceRegistry.get(ExceptionAnalyser.class),
-                loggingManager,
-                listenerManager.getBroadcaster(ModelConfigurationListener.class),
-                listenerManager.getBroadcaster(TasksCompletionListener.class),
-                gradle.getServices().get(BuildExecuter.class),
-                listenerManager.getBroadcaster(BuildCompletionListener.class),
-                serviceRegistry
+            gradle,
+            serviceRegistry.get(InitScriptHandler.class),
+            serviceRegistry.get(SettingsLoader.class),
+            serviceRegistry.get(BuildConfigurer.class),
+            serviceRegistry.get(ExceptionAnalyser.class),
+            loggingManager,
+            gradle.getBuildListenerBroadcaster(),
+            listenerManager.getBroadcaster(ModelConfigurationListener.class),
+            listenerManager.getBroadcaster(BuildCompletionListener.class),
+            serviceRegistry.get(BuildOperationExecutor.class),
+            gradle.getServices().get(BuildConfigurationActionExecuter.class),
+            gradle.getServices().get(BuildExecuter.class),
+            serviceRegistry
         );
     }
 }

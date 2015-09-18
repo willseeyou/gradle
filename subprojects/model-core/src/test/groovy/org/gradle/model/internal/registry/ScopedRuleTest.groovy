@@ -18,12 +18,8 @@ package org.gradle.model.internal.registry
 
 import org.gradle.api.Plugin
 import org.gradle.api.Project
-import org.gradle.model.InvalidModelRuleDeclarationException
-import org.gradle.model.Model
-import org.gradle.model.Mutate
-import org.gradle.model.Path
-import org.gradle.model.RuleSource
-import org.gradle.model.collection.internal.HasDependencies
+import org.gradle.model.*
+import org.gradle.model.internal.core.DefaultNodeInitializerRegistry
 import org.gradle.model.internal.core.DependencyOnlyExtractedModelRule
 import org.gradle.model.internal.core.ExtractedModelRule
 import org.gradle.model.internal.core.ModelRuleExecutionException
@@ -32,12 +28,13 @@ import org.gradle.model.internal.inspect.AbstractAnnotationDrivenModelRuleExtrac
 import org.gradle.model.internal.inspect.MethodModelRuleExtractors
 import org.gradle.model.internal.inspect.MethodRuleDefinition
 import org.gradle.model.internal.inspect.ModelRuleExtractor
+import org.gradle.model.internal.manage.schema.extract.DefaultConstructableTypesRegistry
 import org.gradle.model.internal.manage.schema.extract.DefaultModelSchemaStore
 import spock.lang.Specification
 
 class ScopedRuleTest extends Specification {
 
-    def extractors = [new DependencyAddingModelRuleExtractor()] + MethodModelRuleExtractors.coreExtractors(DefaultModelSchemaStore.getInstance())
+    def extractors = [new DependencyAddingModelRuleExtractor()] + MethodModelRuleExtractors.coreExtractors(DefaultModelSchemaStore.getInstance(), new DefaultNodeInitializerRegistry(DefaultModelSchemaStore.instance, new DefaultConstructableTypesRegistry()))
     def registry = new ModelRegistryHelper(new DefaultModelRegistry(new ModelRuleExtractor(extractors)))
 
     static class RuleSourceUsingRuleWithDependencies extends RuleSource {
@@ -59,7 +56,7 @@ class ScopedRuleTest extends Specification {
 
     def "cannot apply a scoped rule that has dependencies"() {
         registry.createInstance("values", "foo")
-                .apply("values", RuleSourceUsingRuleWithDependencies)
+            .apply("values", RuleSourceUsingRuleWithDependencies)
 
         when:
         registry.get("values")
@@ -80,7 +77,7 @@ class ScopedRuleTest extends Specification {
     def "cannot apply creator rules in scope other than root"() {
         given:
         registry.createInstance("values", "foo")
-                .apply("values", CreatorRule)
+            .apply("values", CreatorRule)
 
         when:
         registry.get("values")
@@ -88,7 +85,7 @@ class ScopedRuleTest extends Specification {
         then:
         ModelRuleExecutionException e = thrown()
         e.cause.class == InvalidModelRuleDeclarationException
-        e.cause.message == "Rule org.gradle.model.internal.registry.ScopedRuleTest\$CreatorRule#string() cannot be applied at the scope of model element values as creation rules cannot be used when applying rule sources to particular elements"
+        e.cause.message == "Rule ScopedRuleTest.CreatorRule#string cannot be applied at the scope of model element values as creation rules cannot be used when applying rule sources to particular elements"
     }
 
     static class ByPathBoundInputsChildRule extends RuleSource {
@@ -110,10 +107,10 @@ class ScopedRuleTest extends Specification {
     def "by-path bindings of scoped rules are bound to inner scope"() {
         given:
         registry.createInstance("first", new MutableValue())
-                .createInstance("second", new MutableValue())
-                .createInstance("values", "foo")
-                .apply("values", ByPathBoundInputsChildRule)
-                .mutate {
+            .createInstance("second", new MutableValue())
+            .createInstance("values", "foo")
+            .apply("values", ByPathBoundInputsChildRule)
+            .mutate {
             it.path "values" node {
                 it.addLink(registry.instanceCreator("values.first", new MutableValue()))
                 it.addLink(registry.instanceCreator("values.second", new MutableValue()))
@@ -140,8 +137,8 @@ class ScopedRuleTest extends Specification {
     def "can bind subject by type to a child of rule scope"() {
         given:
         registry.createInstance("values", "foo")
-                .apply("values", ByTypeSubjectBoundToScopeChildRule)
-                .mutate {
+            .apply("values", ByTypeSubjectBoundToScopeChildRule)
+            .mutate {
             it.path "values" node {
                 it.addLink(registry.instanceCreator("values.mutable", new MutableValue()))
             }
@@ -164,10 +161,10 @@ class ScopedRuleTest extends Specification {
     def "by-type subject bindings are scoped to the scope of an inner rule"() {
         given:
         registry.createInstance("element", new MutableValue())
-                .createInstance("input", 10)
-                .createInstance("values", "foo")
-                .apply("values", ByTypeBindingSubjectRule)
-                .mutate {
+            .createInstance("input", 10)
+            .createInstance("values", "foo")
+            .apply("values", ByTypeBindingSubjectRule)
+            .mutate {
             it.path "values" node {
                 it.addLink(registry.instanceCreator("values.element", new MutableValue()))
             }
@@ -191,9 +188,9 @@ class ScopedRuleTest extends Specification {
     def "by-type input bindings are scoped to the outer scope"() {
         given:
         registry.createInstance("values", "foo")
-                .apply("values", ByTypeBindingInputRule)
-                .createInstance("element", new MutableValue(value: "outer"))
-                .mutate {
+            .apply("values", ByTypeBindingInputRule)
+            .createInstance("element", new MutableValue(value: "outer"))
+            .mutate {
             it.path "values" node {
                 it.addLink(registry.instanceCreator("values.element", new MutableValue()))
             }

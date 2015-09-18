@@ -16,6 +16,8 @@
 package org.gradle.groovy.scripts
 
 import org.gradle.api.Action
+import org.gradle.api.internal.initialization.ClassLoaderIds
+import org.gradle.groovy.scripts.internal.CompileOperation
 import org.gradle.groovy.scripts.internal.CompiledScript
 import org.gradle.groovy.scripts.internal.ScriptClassCompiler
 import org.gradle.groovy.scripts.internal.ScriptRunnerFactory
@@ -26,11 +28,15 @@ import spock.lang.Specification
 class DefaultScriptCompilerFactoryTest extends Specification {
     final ScriptRunnerFactory scriptRunnerFactory = Mock()
     final ScriptClassCompiler scriptClassCompiler = Mock()
-    final ScriptSource source = Mock()
-    final ScriptRunner<TestScript> runner = Mock()
+    final ScriptSource source = Mock() {
+        getFileName() >> "script.file"
+    }
+    final ScriptRunner<TestScript, ?> runner = Mock()
     final ClassLoader classLoader = Mock()
-    final Transformer transformer = Mock()
-    final CompiledScript<TestScript> compiledScript = Mock() {
+    final CompileOperation<?> operation = Mock() {
+        getId() >> "id"
+    }
+    final CompiledScript<TestScript, ?> compiledScript = Mock() {
         loadClass() >> TestScript
     }
     final verifier = Mock(Action)
@@ -39,16 +45,15 @@ class DefaultScriptCompilerFactoryTest extends Specification {
     def "compiles script into class and wraps instance in script runner"() {
         when:
         def compiler = factory.createCompiler(source)
-        compiler.classloader = classLoader
-        compiler.transformer = transformer
-        compiler.verifier = verifier
-        compiler.classpathClosureName = "buildscript"
-        def result = compiler.compile(Script)
+        def result = compiler.compile(Script, operation, classLoader, verifier)
 
         then:
         result == runner
-        1 * scriptClassCompiler.compile({it instanceof CachingScriptSource}, classLoader, transformer, "buildscript", Script, verifier) >> compiledScript
-        1 * scriptRunnerFactory.create(compiledScript, {it instanceof CachingScriptSource}, classLoader) >> runner
+
+        1 * scriptClassCompiler.compile({
+            it instanceof CachingScriptSource
+        }, classLoader, ClassLoaderIds.buildScript(source.fileName, operation.id), operation, Script, verifier) >> compiledScript
+        1 * scriptRunnerFactory.create(compiledScript, { it instanceof CachingScriptSource }, classLoader) >> runner
         0 * scriptRunnerFactory._
         0 * scriptClassCompiler._
     }

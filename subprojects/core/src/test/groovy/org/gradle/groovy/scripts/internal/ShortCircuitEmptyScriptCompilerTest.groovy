@@ -16,23 +16,23 @@
 package org.gradle.groovy.scripts.internal
 
 import org.gradle.api.Action
+import org.gradle.api.internal.initialization.ClassLoaderIds
+import org.gradle.api.internal.initialization.loadercache.ClassLoaderCache
 import org.gradle.groovy.scripts.Script
 import org.gradle.groovy.scripts.ScriptSource
-import org.gradle.groovy.scripts.TestScript
-import org.gradle.groovy.scripts.Transformer
 import org.gradle.internal.resource.Resource
 import spock.lang.Specification
 
 class ShortCircuitEmptyScriptCompilerTest extends Specification {
-    final EmptyScriptGenerator emptyScriptGenerator = Mock()
     final ScriptClassCompiler target = Mock()
     final ScriptSource source = Mock()
     final Resource resource = Mock()
     final ClassLoader classLoader = Mock()
-    final Transformer transformer = Mock()
+    final CompileOperation<?> operation = Mock()
     final Action verifier = Mock()
-    final ShortCircuitEmptyScriptCompiler compiler = new ShortCircuitEmptyScriptCompiler(target, emptyScriptGenerator)
-    String classpathClosureName = "buildscript"
+    final classLoaderCache = Mock(ClassLoaderCache)
+    final ShortCircuitEmptyScriptCompiler compiler = new ShortCircuitEmptyScriptCompiler(target, classLoaderCache)
+    def loaderId = ClassLoaderIds.buildScript(source.getFileName(), operation.getId())
 
     def setup() {
         _ * source.resource >> resource
@@ -40,17 +40,20 @@ class ShortCircuitEmptyScriptCompilerTest extends Specification {
 
     def "returns empty script object when script contains only whitespace"() {
         given:
+        def metadata = "metadata"
         _ * resource.text >> '  \n\t'
+        _ * operation.extractedData >> metadata
+
 
         when:
-        def compiledScript = compiler.compile(source, classLoader, transformer, classpathClosureName, Script, verifier)
-        def result = compiledScript.loadClass()
+        def compiledScript = compiler.compile(source, classLoader, loaderId, operation, Script, verifier)
 
         then:
-        result == TestScript
-        !compiledScript.hasImperativeStatements()
-        1 * emptyScriptGenerator.generate(Script) >> TestScript
-        0 * emptyScriptGenerator._
+        !compiledScript.runDoesSomething
+        !compiledScript.hasMethods
+        compiledScript.data == metadata
+
+        and:
         0 * target._
     }
 
@@ -60,12 +63,12 @@ class ShortCircuitEmptyScriptCompilerTest extends Specification {
         CompiledScript<?> compiledScript = Mock()
 
         when:
-        def result = compiler.compile(source, classLoader, transformer, classpathClosureName, Script, verifier)
+        def result = compiler.compile(source, classLoader, ClassLoaderIds.buildScript(source.getFileName(), operation.getId()), operation, Script, verifier)
 
         then:
         result == compiledScript
-        1 * target.compile(source, classLoader, transformer, classpathClosureName, Script, verifier) >> compiledScript
-        0 * emptyScriptGenerator._
+        1 * target.compile(source, classLoader, ClassLoaderIds.buildScript(source.getFileName(), operation.getId()), operation, Script, verifier) >> compiledScript
         0 * target._
+        0 * classLoaderCache._
     }
 }

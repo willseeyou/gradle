@@ -14,14 +14,19 @@
  * limitations under the License.
  */
 package org.gradle.nativeplatform
+
 import org.gradle.nativeplatform.fixtures.AbstractInstalledToolChainIntegrationSpec
+import org.gradle.nativeplatform.fixtures.NativePlatformsTestFixture
 import org.gradle.nativeplatform.fixtures.app.CHelloWorldApp
 import org.gradle.nativeplatform.fixtures.app.CppCallingCHelloWorldApp
-import org.gradle.nativeplatform.platform.internal.NativePlatforms
+import org.gradle.test.fixtures.file.LeaksFileHandles
 import org.gradle.util.Requires
 import org.gradle.util.TestPrecondition
 import org.hamcrest.Matchers
 
+import static org.gradle.util.Matchers.containsText
+
+@LeaksFileHandles
 class NativeBinariesIntegrationTest extends AbstractInstalledToolChainIntegrationSpec {
     def helloWorldApp = new CppCallingCHelloWorldApp()
 
@@ -68,7 +73,7 @@ model {
     components {
         main(NativeExecutableSpec) {
             targetPlatform "unknown"
-            targetPlatform NativePlatforms.defaultPlatformName
+            targetPlatform "${NativePlatformsTestFixture.defaultPlatformName}"
         }
     }
 }
@@ -77,11 +82,11 @@ model {
         succeeds "assemble"
 
         then:
-        executedAndNotSkipped ":${NativePlatforms.defaultPlatformName}MainExecutable"
+        executedAndNotSkipped ":${NativePlatformsTestFixture.defaultPlatformName}MainExecutable"
         notExecuted ":unknownMainExecutable"
 
         and:
-        executable("build/binaries/mainExecutable/${NativePlatforms.defaultPlatformName}/main").assertExists()
+        executable("build/binaries/mainExecutable/${NativePlatformsTestFixture.defaultPlatformName}/main").assertExists()
         executable("build/binaries/mainExecutable/unknown/main").assertDoesNotExist()
     }
 
@@ -224,7 +229,7 @@ model {
 
         then:
         fails "mainExecutable"
-        failure.assertHasCause("Exception thrown while executing model rule: model.components > create(main)");
+        failure.assertHasCause("Exception thrown while executing model rule: model.components > create(main) > components.main.getSources() > create(java)");
         failure.assertHasCause("Cannot create a JavaSourceSet because this type is not known to this container. Known types are: CSourceSet, CppSourceSet")
     }
 
@@ -251,7 +256,9 @@ model {
         expect:
         fails "mainExecutable"
         failure.assertHasDescription("Execution failed for task ':linkMainExecutable'.");
-        failure.assertHasCause("Linker failed; see the error output for details.")
+        failure.assertHasCause("A build operation failed.")
+        def exeName = executable("build/binaries/mainExecutable/main").file.name
+        failure.assertThatCause(containsText("Linker failed while linking ${exeName}"))
     }
 
     def "build fails when link library fails"() {
@@ -282,7 +289,9 @@ model {
 
         then:
         failure.assertHasDescription("Execution failed for task ':linkMainSharedLibrary'.");
-        failure.assertHasCause("Linker failed; see the error output for details.")
+        failure.assertHasCause("A build operation failed.")
+        def libName = sharedLibrary("build/binaries/mainSharedLibrary/main").file.name
+        failure.assertThatCause(containsText("Linker failed while linking ${libName}"))
     }
 
     def "build fails when create static library fails"() {
@@ -311,7 +320,9 @@ binaries.withType(StaticLibraryBinarySpec) {
 
         then:
         failure.assertHasDescription("Execution failed for task ':createMainStaticLibrary'.");
-        failure.assertHasCause("Static library archiver failed; see the error output for details.")
+        failure.assertHasCause("A build operation failed.")
+        def libName = staticLibrary("build/binaries/mainSharedLibrary/main").file.name
+        failure.assertThatCause(containsText("Static library archiver failed while archiving ${libName}"))
     }
 
     @Requires(TestPrecondition.CAN_INSTALL_EXECUTABLE)

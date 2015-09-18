@@ -41,7 +41,7 @@ public class DefaultTextReportBuilder implements TextReportBuilder {
 
     public void item(String title, String value) {
         textOutput.append("    ").append(title).append(": ");
-        StyledTextOutput itemOutput = new LinePrefixingStyledTextOutput(textOutput, "    ");
+        StyledTextOutput itemOutput = new LinePrefixingStyledTextOutput(textOutput, "    ", false);
         itemOutput.append(value).println();
     }
 
@@ -50,7 +50,6 @@ public class DefaultTextReportBuilder implements TextReportBuilder {
     }
 
     public void item(String value) {
-        textOutput.append("    ");
         StyledTextOutput itemOutput = new LinePrefixingStyledTextOutput(textOutput, "    ");
         itemOutput.append(value).println();
     }
@@ -76,6 +75,16 @@ public class DefaultTextReportBuilder implements TextReportBuilder {
         textOutput.style(Normal).println();
     }
 
+    public <T> void itemCollection(String title, Collection<? extends T> items, ReportRenderer<T, TextReportBuilder> renderer, String elementsPlural) {
+        StyledTextOutput original = textOutput;
+        try {
+            textOutput = new LinePrefixingStyledTextOutput(original, "    ");
+            collection(title + ":", items, renderer, elementsPlural);
+        } finally {
+            textOutput = original;
+        }
+    }
+
     public <T> void collection(String title, Collection<? extends T> items, ReportRenderer<T, TextReportBuilder> renderer, String elementsPlural) {
         textOutput.println(title);
         if (items.isEmpty()) {
@@ -88,15 +97,9 @@ public class DefaultTextReportBuilder implements TextReportBuilder {
     @Override
     public <T> void collection(Iterable<? extends T> items, ReportRenderer<T, TextReportBuilder> renderer) {
         StyledTextOutput original = textOutput;
-        boolean hasItem = false;
         try {
             textOutput = new LinePrefixingStyledTextOutput(original, "    ");
             for (T t : items) {
-                // TODO - change LinePrefixingStyledTextOutput to prefix every line
-                if (!hasItem) {
-                    textOutput.append("    ");
-                    hasItem = true;
-                }
                 try {
                     renderer.render(t, this);
                 } catch (IOException e) {

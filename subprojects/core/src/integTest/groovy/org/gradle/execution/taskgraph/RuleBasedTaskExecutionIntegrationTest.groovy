@@ -101,4 +101,130 @@ class RuleBasedTaskExecutionIntegrationTest extends AbstractIntegrationSpec {
         output.contains "task container node state at the end of build: ${ModelNode.State.SelfClosed}"
         output.contains "task container node state after graph closing: ${ModelNode.State.GraphClosed}"
     }
+
+    def "tasks added via task container and not explicitly required but executed are self closed"() {
+        given:
+        buildScript '''
+            class EchoTask extends DefaultTask {
+                String text = "default"
+
+                @TaskAction
+                void print() {
+                    println "$name: $text"
+                }
+            }
+
+            class Rules extends RuleSource {
+                @Mutate
+                void configureDependencyTask(@Path("tasks.dependency") EchoTask task) {
+                    task.text = "configured"
+                }
+
+                @Mutate
+                void configureFinalizerTask(@Path("tasks.finalizer") EchoTask task) {
+                    task.text = "configured"
+                }
+
+                @Mutate
+                void addTasks(ModelMap<Task> tasks) {
+                    tasks.create("requested") {
+                        dependsOn "dependency"
+                        finalizedBy "finalizer"
+                    }
+                }
+            }
+
+            apply type: Rules
+
+            tasks.create("dependency", EchoTask)
+            tasks.create("finalizer", EchoTask)
+        '''
+
+        when:
+        succeeds "requested"
+
+        then:
+        output.contains "dependency: configured"
+        output.contains "finalizer: configured"
+    }
+
+    def "task container is self closed for projects of which any tasks are being executed"() {
+        settingsFile << "include 'a', 'b'"
+
+        buildScript """
+            project(':a') {
+                apply type: ProjectARules
+            }
+
+            project(':b') {
+                apply type: ProjectBRules
+            }
+
+            class ProjectARules extends RuleSource {
+                @Mutate
+                void addTasks(ModelMap<Task> tasks) {
+                    tasks.create("executed") {
+                        dependsOn ":b:dependency"
+                    }
+                }
+            }
+
+            class ProjectBRules extends RuleSource {
+                @Mutate
+                void addTasks(ModelMap<Task> tasks) {
+                    tasks.create("dependency")
+                }
+            }
+        """
+
+        when:
+        succeeds ":a:executed"
+
+        then:
+        ":b:dependency" in executedTasks
+    }
+
+    def "can get name of task defined in rules only script plugin after configuration"() {
+        when:
+        buildScript """
+            apply from: "fooTask.gradle"
+            task check << {
+              assert getTasksByName("foo", false).toList().first().name == "foo"
+            }
+        """
+
+        file("fooTask.gradle") << """
+            model {
+                tasks { create("foo") }
+            }
+        """
+
+        then:
+        succeeds "check", "foo"
+    }
+
+    def "cant get name of task defined in rules only script plugin during configuration"() {
+        // Not really a test, more of a documentation of the current behaviour
+        // getTasksByName() doesn't exhaustively check for rule based tasks
+        when:
+        buildScript """
+            apply from: "fooTask.gradle"
+            task check {
+              def fooTasks = getTasksByName("foo", false).toList()
+              doFirst {
+                assert fooTasks.isEmpty()
+              }
+            }
+        """
+
+        file("fooTask.gradle") << """
+            model {
+                tasks { create("foo") }
+            }
+        """
+
+        then:
+        succeeds "check", "foo"
+    }
+
 }

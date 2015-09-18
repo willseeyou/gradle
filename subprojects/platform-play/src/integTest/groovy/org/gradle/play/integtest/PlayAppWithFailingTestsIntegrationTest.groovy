@@ -18,7 +18,7 @@ package org.gradle.play.integtest
 
 import org.gradle.integtests.fixtures.JUnitXmlTestExecutionResult
 import org.gradle.play.integtest.fixtures.PlayMultiVersionIntegrationTest
-import org.gradle.play.integtest.fixtures.app.PlayApp
+import org.gradle.play.integtest.fixtures.PlayApp
 import org.gradle.play.integtest.fixtures.app.WithFailingTestsApp
 import org.gradle.util.TextUtil
 
@@ -27,7 +27,7 @@ class PlayAppWithFailingTestsIntegrationTest extends PlayMultiVersionIntegration
     PlayApp playApp = new WithFailingTestsApp();
 
     def setup() {
-        playApp.writeSources(file("."))
+        playApp.writeSources(testDirectory)
         buildFile << """
 model {
     components {
@@ -45,13 +45,13 @@ model {
         then:
 
         output.contains(TextUtil.toPlatformLineSeparators("""
-FailingApplicationSpec > Application should::render the index page FAILED
-    org.specs2.reporter.SpecFailureAssertionFailedError
+FailingApplicationSpec > failingTest FAILED
+    java.lang.AssertionError at FailingApplicationSpec.scala:23
 """))
 
         output.contains(TextUtil.toPlatformLineSeparators("""
-FailingIntegrationSpec > Application should::work from within a browser FAILED
-    org.specs2.reporter.SpecFailureAssertionFailedError
+FailingIntegrationSpec > failingTest FAILED
+    java.lang.AssertionError at FailingIntegrationSpec.scala:23
 """))
         errorOutput.contains("6 tests completed, 2 failed")
         errorOutput.contains("> There were failing tests.")

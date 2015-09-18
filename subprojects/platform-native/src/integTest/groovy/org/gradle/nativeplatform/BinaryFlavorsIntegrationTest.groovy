@@ -16,9 +16,10 @@
 package org.gradle.nativeplatform
 
 import org.gradle.nativeplatform.fixtures.AbstractInstalledToolChainIntegrationSpec
+import org.gradle.nativeplatform.fixtures.NativePlatformsTestFixture
 import org.gradle.nativeplatform.fixtures.app.ExeWithLibraryUsingLibraryHelloWorldApp
 import org.gradle.nativeplatform.fixtures.app.HelloWorldApp
-import org.gradle.nativeplatform.platform.internal.NativePlatforms
+import org.gradle.test.fixtures.file.LeaksFileHandles
 import org.gradle.util.Requires
 import org.gradle.util.TestPrecondition
 
@@ -65,6 +66,7 @@ model {
         helloWorldApp.writeSources(file("src/main"), file("src/hello"), file("src/greetings"))
     }
 
+    @LeaksFileHandles
     def "can configure components for a single flavor"() {
         given:
         buildFile << """
@@ -98,6 +100,7 @@ model {
         installation("build/install/mainExecutable/german").assertInstalled()
     }
 
+    @LeaksFileHandles("can't delete build/install/mainExecutable/french")
     def "executable with flavors depends on library with matching flavors"() {
         when:
         buildFile << """
@@ -152,7 +155,7 @@ model {
 
         then:
         fails "germanMainExecutable"
-        failure.assertHasDescription("No shared library binary available for library 'hello' with [flavor: 'german', platform: '${NativePlatforms.defaultPlatformName}', buildType: 'debug']")
+        failure.assertHasDescription("No shared library binary available for library 'hello' with [flavor: 'german', platform: '${NativePlatformsTestFixture.defaultPlatformName}', buildType: 'debug']")
     }
 
     def "fails with reasonable error message when trying to target an unknown flavor"() {
@@ -169,7 +172,7 @@ model {
         fails "mainExecutable"
 
         then:
-        failure.assertHasCause("Exception thrown while executing model rule: org.gradle.nativeplatform.plugins.NativeComponentModelPlugin\$Rules#createNativeBinaries")
+        failure.assertHasCause("Exception thrown while executing model rule: NativeComponentRules#createBinaries")
         failure.assertHasCause("Invalid Flavor: 'unknown'")
     }
 }

@@ -16,6 +16,7 @@
 
 package org.gradle.model.internal.core;
 
+import com.google.common.base.Optional;
 import org.gradle.api.Nullable;
 import org.gradle.model.internal.core.rule.describe.ModelRuleDescriptor;
 import org.gradle.model.internal.type.ModelType;
@@ -53,12 +54,18 @@ public class EmptyModelProjection implements ModelProjection {
     }
 
     @Override
-    public Iterable<String> getWritableTypeDescriptions() {
+    public Iterable<String> getWritableTypeDescriptions(MutableModelNode node) {
         return Collections.emptyList();
     }
 
     @Override
-    public Iterable<String> getReadableTypeDescriptions() {
+    public Iterable<String> getReadableTypeDescriptions(MutableModelNode node) {
         return Collections.emptyList();
     }
+
+    @Override
+    public Optional<String> getValueDescription(MutableModelNode modelNodeInternal) {
+        return Optional.absent();
+    }
+
 }

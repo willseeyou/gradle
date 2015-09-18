@@ -24,34 +24,27 @@ import org.gradle.api.internal.classpath.ModuleRegistry
 import org.gradle.api.internal.classpath.PluginModuleRegistry
 import org.gradle.api.internal.file.FileLookup
 import org.gradle.api.internal.file.FileResolver
-import org.gradle.api.internal.initialization.loadercache.ClassLoaderCacheFactory
+import org.gradle.api.internal.initialization.loadercache.ClassLoaderCache
 import org.gradle.api.internal.project.*
 import org.gradle.cache.CacheRepository
 import org.gradle.cache.internal.CacheFactory
-import org.gradle.cache.internal.DefaultCacheRepository
-import org.gradle.configuration.BuildConfigurer
-import org.gradle.configuration.DefaultBuildConfigurer
-import org.gradle.configuration.DefaultScriptPluginFactory
-import org.gradle.configuration.ScriptPluginFactory
+import org.gradle.configuration.*
 import org.gradle.groovy.scripts.DefaultScriptCompilerFactory
 import org.gradle.groovy.scripts.ScriptCompilerFactory
 import org.gradle.initialization.*
 import org.gradle.internal.Factory
 import org.gradle.internal.classloader.ClassLoaderFactory
+import org.gradle.internal.event.DefaultListenerManager
+import org.gradle.internal.event.ListenerManager
+import org.gradle.internal.operations.logging.BuildOperationLoggerFactory
+import org.gradle.internal.operations.logging.DefaultBuildOperationLoggerFactory
 import org.gradle.internal.reflect.Instantiator
-import org.gradle.internal.service.ServiceRegistry
-import org.gradle.listener.DefaultListenerManager
-import org.gradle.listener.ListenerManager
+import org.gradle.logging.LoggingConfiguration
 import org.gradle.logging.LoggingManagerInternal
 import org.gradle.logging.ProgressLoggerFactory
-import org.gradle.messaging.remote.MessagingServer
 import org.gradle.model.internal.inspect.ModelRuleSourceDetector
 import org.gradle.plugin.use.internal.PluginRequestApplicator
-import org.gradle.process.internal.DefaultWorkerProcessFactory
-import org.gradle.process.internal.WorkerProcessBuilder
 import org.gradle.profile.ProfileEventAdapter
-import org.gradle.test.fixtures.file.TestNameTestDirectoryProvider
-import org.junit.Rule
 import spock.lang.Specification
 
 import static org.hamcrest.Matchers.instanceOf
@@ -59,40 +52,41 @@ import static org.hamcrest.Matchers.sameInstance
 import static org.junit.Assert.assertThat
 
 public class BuildScopeServicesTest extends Specification {
-    @Rule
-    TestNameTestDirectoryProvider tmpDir = new TestNameTestDirectoryProvider()
     StartParameter startParameter = new StartParameter()
-    ServiceRegistry parent = Stub()
+    BuildSessionScopeServices sessionServices = Mock()
     Factory<CacheFactory> cacheFactoryFactory = Mock()
     ClosableCacheFactory cacheFactory = Mock()
     ClassLoaderRegistry classLoaderRegistry = Mock()
 
-    BuildScopeServices registry = new BuildScopeServices(parent, startParameter)
+    BuildScopeServices registry
 
     def setup() {
-        startParameter.gradleUserHomeDir = tmpDir.testDirectory
-        parent.getFactory(CacheFactory) >> cacheFactoryFactory
+        sessionServices.getFactory(CacheFactory) >> cacheFactoryFactory
         cacheFactoryFactory.create() >> cacheFactory
-        parent.get(ClassLoaderRegistry) >> classLoaderRegistry
-        parent.getFactory(LoggingManagerInternal) >> Stub(Factory)
-        parent.get(ModuleRegistry) >> new DefaultModuleRegistry()
-        parent.get(PluginModuleRegistry) >> Stub(PluginModuleRegistry)
-        parent.get(DependencyManagementServices) >> Stub(DependencyManagementServices)
-        parent.get(Instantiator) >> ThreadGlobalInstantiator.getOrCreate()
-        parent.get(FileResolver) >> Stub(FileResolver)
-        parent.get(ProgressLoggerFactory) >> Stub(ProgressLoggerFactory)
-        parent.get(CacheFactory) >> Stub(CacheFactory)
-        parent.get(DocumentationRegistry) >> new DocumentationRegistry()
-        parent.get(FileLookup) >> Stub(FileLookup)
-        parent.get(PluginRequestApplicator) >> Mock(PluginRequestApplicator)
-        parent.get(BuildCancellationToken) >> Mock(BuildCancellationToken)
-        parent.get(ClassLoaderCacheFactory) >> Stub(ClassLoaderCacheFactory)
-        parent.get(ModelRuleSourceDetector) >> Mock(ModelRuleSourceDetector)
+        sessionServices.get(ClassLoaderRegistry) >> classLoaderRegistry
+        sessionServices.getFactory(LoggingManagerInternal) >> Stub(Factory)
+        sessionServices.get(ModuleRegistry) >> new DefaultModuleRegistry()
+        sessionServices.get(PluginModuleRegistry) >> Stub(PluginModuleRegistry)
+        sessionServices.get(DependencyManagementServices) >> Stub(DependencyManagementServices)
+        sessionServices.get(Instantiator) >> ThreadGlobalInstantiator.getOrCreate()
+        sessionServices.get(FileResolver) >> Stub(FileResolver)
+        sessionServices.get(ProgressLoggerFactory) >> Stub(ProgressLoggerFactory)
+        sessionServices.get(DocumentationRegistry) >> new DocumentationRegistry()
+        sessionServices.get(FileLookup) >> Stub(FileLookup)
+        sessionServices.get(PluginRequestApplicator) >> Mock(PluginRequestApplicator)
+        sessionServices.get(BuildCancellationToken) >> Mock(BuildCancellationToken)
+        sessionServices.get(ModelRuleSourceDetector) >> Mock(ModelRuleSourceDetector)
+        sessionServices.get(ClassLoaderCache) >> Mock(ClassLoaderCache)
+        sessionServices.get(ImportsReader) >> Mock(ImportsReader)
+        sessionServices.get(StartParameter) >> startParameter
+        sessionServices.getAll(_) >> []
+
+        registry = new BuildScopeServices(sessionServices, false)
     }
 
     def delegatesToParentForUnknownService() {
         setup:
-        parent.get(String) >> "value"
+        sessionServices.get(String) >> "value"
 
         expect:
         registry.get(String) == "value"
@@ -103,10 +97,12 @@ public class BuildScopeServicesTest extends Specification {
         def plugin1 = Mock(PluginServiceRegistry)
 
         given:
-        parent.getAll(PluginServiceRegistry) >> [plugin1, plugin2]
+        def sessionServices = Mock(BuildSessionScopeServices) {
+            getAll(PluginServiceRegistry) >> [plugin1, plugin2]
+        }
 
         when:
-        new BuildScopeServices(parent, startParameter)
+        new BuildScopeServices(sessionServices, false)
 
         then:
         1 * plugin1.registerBuildServices(_)
@@ -166,22 +162,18 @@ public class BuildScopeServicesTest extends Specification {
     def providesAScriptCompilerFactory() {
         setup:
         expectListenerManagerCreated()
+        expectParentServiceLocated(CacheRepository)
 
         expect:
         registry.get(ScriptCompilerFactory) instanceof DefaultScriptCompilerFactory
         registry.get(ScriptCompilerFactory) == registry.get(ScriptCompilerFactory)
     }
 
-    def providesACacheRepositoryAndCleansUpOnClose() {
-        expect:
-        registry.get(CacheRepository) instanceof DefaultCacheRepository
-        registry.get(CacheRepository) == registry.get(CacheRepository)
-    }
-
     def providesAnInitScriptHandler() {
         setup:
         expectListenerManagerCreated()
         allowGetGradleDistributionLocator()
+        expectParentServiceLocated(CacheRepository)
 
         expect:
         registry.get(InitScriptHandler) instanceof InitScriptHandler
@@ -191,6 +183,8 @@ public class BuildScopeServicesTest extends Specification {
     def providesAScriptObjectConfigurerFactory() {
         setup:
         expectListenerManagerCreated()
+        expectParentServiceLocated(CacheRepository)
+
         expect:
         assertThat(registry.get(ScriptPluginFactory), instanceOf(DefaultScriptPluginFactory))
         assertThat(registry.get(ScriptPluginFactory), sameInstance(registry.get(ScriptPluginFactory)))
@@ -199,27 +193,23 @@ public class BuildScopeServicesTest extends Specification {
     def providesASettingsProcessor() {
         setup:
         expectListenerManagerCreated()
+        expectParentServiceLocated(CacheRepository)
+
         expect:
-        assertThat(registry.get(SettingsProcessor), instanceOf(PropertiesLoadingSettingsProcessor))
+        assertThat(registry.get(SettingsProcessor), instanceOf(NotifyingSettingsProcessor))
         assertThat(registry.get(SettingsProcessor), sameInstance(registry.get(SettingsProcessor)))
     }
 
     def providesAnExceptionAnalyser() {
         setup:
         expectListenerManagerCreated()
+        expectParentServiceLocated(LoggingConfiguration)
+
         expect:
         assertThat(registry.get(ExceptionAnalyser), instanceOf(StackTraceSanitizingExceptionAnalyser))
         assertThat(registry.get(ExceptionAnalyser).analyser, instanceOf(MultipleBuildFailuresExceptionAnalyser))
         assertThat(registry.get(ExceptionAnalyser).analyser.delegate, instanceOf(DefaultExceptionAnalyser))
         assertThat(registry.get(ExceptionAnalyser), sameInstance(registry.get(ExceptionAnalyser)))
-    }
-
-    def providesAWorkerProcessFactory() {
-        setup:
-        expectParentServiceLocated(MessagingServer)
-
-        expect:
-        assertThat(registry.getFactory(WorkerProcessBuilder), instanceOf(DefaultWorkerProcessFactory))
     }
 
     def providesAnIsolatedAntBuilder() {
@@ -280,22 +270,38 @@ public class BuildScopeServicesTest extends Specification {
         projectRegistry sameInstance(secondRegistry)
     }
 
+    def "provides an build operation logger factory"() {
+        when:
+        def operationLoggerFactory = registry.get(BuildOperationLoggerFactory)
+
+        then:
+        operationLoggerFactory instanceof DefaultBuildOperationLoggerFactory
+    }
+
+    def "closes session when single use" () {
+        when:
+        new BuildScopeServices(sessionServices, true).close()
+
+        then:
+        1 * sessionServices.close()
+    }
+
     private <T> T expectParentServiceLocated(Class<T> type) {
         T t = Mock(type)
-        parent.get(type) >> t
+        sessionServices.get(type) >> t
         t
     }
 
     private ListenerManager expectListenerManagerCreated() {
         final ListenerManager listenerManager = new DefaultListenerManager()
         final ListenerManager listenerManagerParent = Mock()
-        parent.get(ListenerManager) >> listenerManagerParent
+        sessionServices.get(ListenerManager) >> listenerManagerParent
         1 * listenerManagerParent.createChild() >> listenerManager
         listenerManager
     }
 
     private void allowGetGradleDistributionLocator() {
-        parent.get(GradleDistributionLocator) >> Mock(GradleDistributionLocator)
+        sessionServices.get(GradleDistributionLocator) >> Mock(GradleDistributionLocator)
     }
 
     public interface ClosableCacheFactory extends CacheFactory {

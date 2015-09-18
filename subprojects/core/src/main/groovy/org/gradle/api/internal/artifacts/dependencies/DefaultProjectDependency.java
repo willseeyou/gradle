@@ -32,7 +32,7 @@ import java.io.File;
 import java.util.Set;
 
 public class DefaultProjectDependency extends AbstractModuleDependency implements ProjectDependencyInternal {
-    private ProjectInternal dependencyProject;
+    private final ProjectInternal dependencyProject;
     private final boolean buildProjectDependencies;
     private final TaskDependencyImpl taskDependency = new TaskDependencyImpl();
     private final ProjectAccessListener projectAccessListener;
@@ -155,7 +155,8 @@ public class DefaultProjectDependency extends AbstractModuleDependency implement
     }
 
     private class TaskDependencyImpl extends AbstractTaskDependency {
-        public void resolve(TaskDependencyResolveContext context) {
+        @Override
+        public void visitDependencies(TaskDependencyResolveContext context) {
             if (!buildProjectDependencies) {
                 return;
             }

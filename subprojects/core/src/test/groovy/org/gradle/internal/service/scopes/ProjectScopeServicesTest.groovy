@@ -51,7 +51,7 @@ import org.gradle.logging.LoggingManagerInternal
 import org.gradle.model.internal.inspect.ModelRuleExtractor
 import org.gradle.model.internal.inspect.ModelRuleSourceDetector
 import org.gradle.model.internal.registry.ModelRegistry
-import org.gradle.model.persist.ModelRegistryStore
+import org.gradle.model.internal.persist.ModelRegistryStore
 import org.gradle.test.fixtures.file.TestNameTestDirectoryProvider
 import org.gradle.tooling.provider.model.ToolingModelBuilderRegistry
 import org.gradle.tooling.provider.model.internal.DefaultToolingModelBuilderRegistry
@@ -86,13 +86,13 @@ class ProjectScopeServicesTest extends Specification {
         project.projectDir >> testDirectoryProvider.file("project-dir").createDir().absoluteFile
         project.buildScriptSource >> Stub(ScriptSource)
         project.getClassLoaderScope() >> classLoaderScope
-        project.getClassLoaderScope().createChild() >> classLoaderScope
+        project.getClassLoaderScope().createChild(_) >> classLoaderScope
         project.getClassLoaderScope().lock() >> classLoaderScope
         parent.get(ITaskFactory) >> taskFactory
         parent.get(DependencyFactory) >> dependencyFactory
         parent.get(PluginRegistry) >> pluginRegistry
         parent.get(DependencyManagementServices) >> dependencyManagementServices
-        parent.get(Instantiator) >> new DirectInstantiator()
+        parent.get(Instantiator) >> DirectInstantiator.INSTANCE
         parent.get(FileSystem) >> Stub(FileSystem)
         parent.get(ClassGenerator) >> Stub(ClassGenerator)
         parent.get(ProjectAccessListener) >> Stub(ProjectAccessListener)

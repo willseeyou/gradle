@@ -45,6 +45,11 @@ public class CacheLockReleasingModuleComponentsRepository extends BaseModuleComp
         private final ModuleComponentRepositoryAccess delegate;
         private final CacheLockingManager cacheLockingManager;
 
+        @Override
+        public String toString() {
+            return "unlocking > " + delegate.toString();
+        }
+
         private LockReleasingRepositoryAccess(String name, ModuleComponentRepositoryAccess delegate, CacheLockingManager cacheLockingManager) {
             this.name = name;
             this.delegate = delegate;
@@ -59,10 +64,11 @@ public class CacheLockReleasingModuleComponentsRepository extends BaseModuleComp
             });
         }
 
-        public void resolveComponentMetaData(final DependencyMetaData dependency, final ModuleComponentIdentifier moduleComponentIdentifier, final BuildableModuleComponentMetaDataResolveResult result) {
-            cacheLockingManager.longRunningOperation(String.format("Resolve %s using repository %s", dependency, name), new Runnable() {
+        public void resolveComponentMetaData(final ModuleComponentIdentifier moduleComponentIdentifier,
+                                             final ComponentOverrideMetadata requestMetaData, final BuildableModuleComponentMetaDataResolveResult result) {
+            cacheLockingManager.longRunningOperation(String.format("Resolve %s using repository %s", moduleComponentIdentifier, name), new Runnable() {
                 public void run() {
-                    delegate.resolveComponentMetaData(dependency, moduleComponentIdentifier, result);
+                    delegate.resolveComponentMetaData(moduleComponentIdentifier, requestMetaData, result);
                 }
             });
         }

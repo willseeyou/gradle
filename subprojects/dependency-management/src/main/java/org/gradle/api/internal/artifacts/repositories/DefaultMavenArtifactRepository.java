@@ -18,6 +18,7 @@ package org.gradle.api.internal.artifacts.repositories;
 import com.google.common.collect.Lists;
 import org.gradle.api.InvalidUserDataException;
 import org.gradle.api.artifacts.repositories.MavenArtifactRepository;
+import org.gradle.api.artifacts.repositories.AuthenticationContainer;
 import org.gradle.api.internal.artifacts.ModuleVersionPublisher;
 import org.gradle.api.internal.artifacts.ivyservice.ivyresolve.ConfiguredModuleComponentRepository;
 import org.gradle.api.internal.artifacts.ivyservice.ivyresolve.parser.MetaDataParser;
@@ -25,6 +26,7 @@ import org.gradle.api.internal.artifacts.repositories.resolver.MavenResolver;
 import org.gradle.api.internal.artifacts.repositories.transport.RepositoryTransport;
 import org.gradle.api.internal.artifacts.repositories.transport.RepositoryTransportFactory;
 import org.gradle.api.internal.file.FileResolver;
+import org.gradle.internal.component.external.model.DefaultMavenModuleResolveMetaData;
 import org.gradle.internal.component.external.model.ModuleComponentArtifactMetaData;
 import org.gradle.internal.reflect.Instantiator;
 import org.gradle.internal.resource.local.FileStore;
@@ -43,13 +45,15 @@ public class DefaultMavenArtifactRepository extends AbstractAuthenticationSuppor
     private List<Object> additionalUrls = new ArrayList<Object>();
     private final LocallyAvailableResourceFinder<ModuleComponentArtifactMetaData> locallyAvailableResourceFinder;
     private final FileStore<ModuleComponentArtifactMetaData> artifactFileStore;
-    private final MetaDataParser pomParser;
+    private final MetaDataParser<DefaultMavenModuleResolveMetaData> pomParser;
 
     public DefaultMavenArtifactRepository(FileResolver fileResolver, RepositoryTransportFactory transportFactory,
                                           LocallyAvailableResourceFinder<ModuleComponentArtifactMetaData> locallyAvailableResourceFinder,
                                           Instantiator instantiator,
-                                          FileStore<ModuleComponentArtifactMetaData> artifactFileStore, MetaDataParser pomParser) {
-        super(instantiator);
+                                          FileStore<ModuleComponentArtifactMetaData> artifactFileStore,
+                                          MetaDataParser<DefaultMavenModuleResolveMetaData> pomParser,
+                                          AuthenticationContainer authenticationContainer) {
+        super(instantiator, authenticationContainer);
         this.fileResolver = fileResolver;
         this.transportFactory = transportFactory;
         this.locallyAvailableResourceFinder = locallyAvailableResourceFinder;
@@ -108,7 +112,7 @@ public class DefaultMavenArtifactRepository extends AbstractAuthenticationSuppor
         return new MavenResolver(getName(), rootUri, transport, locallyAvailableResourceFinder, artifactFileStore, pomParser);
     }
 
-    public MetaDataParser getPomParser() {
+    public MetaDataParser<DefaultMavenModuleResolveMetaData> getPomParser() {
         return pomParser;
     }
 
@@ -117,7 +121,7 @@ public class DefaultMavenArtifactRepository extends AbstractAuthenticationSuppor
     }
 
     protected RepositoryTransport getTransport(String scheme) {
-        return transportFactory.createTransport(scheme, getName(), getAlternativeCredentials());
+        return transportFactory.createTransport(scheme, getName(), getConfiguredAuthentication());
     }
 
     protected LocallyAvailableResourceFinder<ModuleComponentArtifactMetaData> getLocallyAvailableResourceFinder() {

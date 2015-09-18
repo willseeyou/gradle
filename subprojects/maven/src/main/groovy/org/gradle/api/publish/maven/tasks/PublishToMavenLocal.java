@@ -18,7 +18,6 @@ package org.gradle.api.publish.maven.tasks;
 
 import org.gradle.api.Incubating;
 import org.gradle.api.InvalidUserDataException;
-import org.gradle.api.artifacts.repositories.MavenArtifactRepository;
 import org.gradle.api.publish.internal.PublishOperation;
 import org.gradle.api.publish.maven.internal.publication.MavenPublicationInternal;
 import org.gradle.api.publish.maven.internal.publisher.MavenLocalPublisher;
@@ -33,11 +32,7 @@ import org.gradle.api.tasks.TaskAction;
  * @since 1.4
  */
 @Incubating
-public class PublishToMavenLocal extends PublishToMavenRepository {
-    @Override
-    public void setRepository(MavenArtifactRepository repository) {
-        throw new UnsupportedOperationException("Cannot set repository for PublishToMavenLocal");
-    }
+public class PublishToMavenLocal extends AbstractPublishToMaven {
 
     @TaskAction
     public void publish() {
@@ -49,8 +44,8 @@ public class PublishToMavenLocal extends PublishToMavenRepository {
         new PublishOperation(publication, "mavenLocal") {
             @Override
             protected void publish() throws Exception {
-                MavenPublisher antBackedPublisher = new MavenLocalPublisher(getLoggingManagerFactory(), getMavenRepositoryLocator());
-                MavenPublisher staticLockingPublisher = new StaticLockingMavenPublisher(antBackedPublisher);
+                MavenPublisher localPublisher = new MavenLocalPublisher(getLoggingManagerFactory(), getMavenRepositoryLocator());
+                MavenPublisher staticLockingPublisher = new StaticLockingMavenPublisher(localPublisher);
                 MavenPublisher validatingPublisher = new ValidatingMavenPublisher(staticLockingPublisher);
                 validatingPublisher.publish(publication.asNormalisedPublication(), null);
             }

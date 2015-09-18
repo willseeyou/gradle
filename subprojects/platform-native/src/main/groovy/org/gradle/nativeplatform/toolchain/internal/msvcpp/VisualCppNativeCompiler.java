@@ -21,20 +21,20 @@ import org.gradle.internal.operations.BuildOperationProcessor;
 import org.gradle.nativeplatform.toolchain.internal.*;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
-/**
- */
 class VisualCppNativeCompiler<T extends NativeCompileSpec> extends NativeCompiler<T> {
 
-    VisualCppNativeCompiler(BuildOperationProcessor buildOperationProcessor, CommandLineTool commandLineTool, CommandLineToolInvocation baseInvocation, ArgsTransformer<T> argsTransformer, Transformer<T, T> specTransformer, String objectFileSuffix, boolean useCommandFile) {
-        super(buildOperationProcessor, commandLineTool, baseInvocation, argsTransformer, specTransformer, objectFileSuffix, useCommandFile);
+    VisualCppNativeCompiler(BuildOperationProcessor buildOperationProcessor, CommandLineToolInvocationWorker commandLineToolInvocationWorker, CommandLineToolContext invocationContext, ArgsTransformer<T> argsTransformer, Transformer<T, T> specTransformer, String objectFileExtension, boolean useCommandFile) {
+        super(buildOperationProcessor, commandLineToolInvocationWorker, invocationContext, argsTransformer, specTransformer, objectFileExtension, useCommandFile);
     }
 
     @Override
-    protected void addOutputArgs(List<String> args, File outputFile) {
+    protected List<String> getOutputArgs(File outputFile) {
         // MSVC doesn't allow a space between Fo and the file name
-        args.add("/Fo" + outputFile.getAbsolutePath());
+        return Collections.singletonList("/Fo" + outputFile.getAbsolutePath());
     }
 
     @Override
@@ -42,5 +42,17 @@ class VisualCppNativeCompiler<T extends NativeCompileSpec> extends NativeCompile
         OptionsFileArgsWriter writer = new VisualCppOptionsFileArgsWriter(tempDir);
         // modifies args in place
         writer.execute(args);
+    }
+
+    @Override
+    protected List<String> getPCHArgs(T spec) {
+        List<String> pchArgs = new ArrayList<String>();
+        if (spec.getPreCompiledHeader() != null && spec.getPreCompiledHeaderObjectFile() != null) {
+            String lastHeader = spec.getPreCompiledHeader();
+
+            pchArgs.add("/Yu".concat(lastHeader));
+            pchArgs.add("/Fp".concat(spec.getPreCompiledHeaderObjectFile().getAbsolutePath()));
+        }
+        return pchArgs;
     }
 }

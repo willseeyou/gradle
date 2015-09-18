@@ -24,26 +24,20 @@ import org.gradle.internal.os.OperatingSystem
 import org.gradle.performance.measure.Amount
 import org.gradle.performance.measure.DataAmount
 import org.gradle.performance.measure.Duration
-import org.gradle.performance.measure.MeasuredOperation
-import org.gradle.test.fixtures.file.TestDirectoryProvider
 import org.gradle.util.GradleVersion
 
 public class CrossVersionPerformanceTestRunner extends PerformanceTestSpec {
-    TestDirectoryProvider testDirectoryProvider
     GradleDistribution current
-    IntegrationTestBuildContext buildContext = new IntegrationTestBuildContext()
-    DataReporter<CrossVersionPerformanceResults> reporter
-    OperationTimer timer = new OperationTimer()
+    final IntegrationTestBuildContext buildContext = new IntegrationTestBuildContext()
+    final DataReporter<CrossVersionPerformanceResults> reporter
     TestProjectLocator testProjectLocator = new TestProjectLocator()
+    final BuildExperimentRunner experimentRunner
 
     String testProject
     boolean useDaemon
+    boolean allowEmptyTargetVersions = false
 
     List<String> tasksToRun = []
-    private GCLoggingCollector gcCollector = new GCLoggingCollector()
-    DataCollector dataCollector = new CompositeDataCollector(
-            new MemoryInfoCollector(outputFileName: "build/totalMemoryUsed.txt"),
-            gcCollector)
     List<String> args = []
     List<String> gradleOpts = []
 
@@ -51,18 +45,16 @@ public class CrossVersionPerformanceTestRunner extends PerformanceTestSpec {
     Amount<Duration> maxExecutionTimeRegression = Duration.millis(0)
     Amount<DataAmount> maxMemoryRegression = DataAmount.bytes(0)
 
-    CrossVersionPerformanceResults results
-    GradleExecuterProvider executerProvider = new GradleExecuterProvider()
+    CrossVersionPerformanceTestRunner(BuildExperimentRunner experimentRunner, DataReporter<CrossVersionPerformanceResults> reporter) {
+        this.reporter = reporter
+        this.experimentRunner = experimentRunner
+    }
 
     CrossVersionPerformanceResults run() {
-        assert !targetVersions.empty
+        assert allowEmptyTargetVersions || !targetVersions.empty
         assert testId
 
-        if (useDaemon) {
-            gcCollector.useDaemon()
-        }
-
-        results = new CrossVersionPerformanceResults(
+        def results = new CrossVersionPerformanceResults(
                 testId: testId,
                 testProject: testProject,
                 tasks: tasksToRun,
@@ -84,7 +76,7 @@ public class CrossVersionPerformanceTestRunner extends PerformanceTestSpec {
         // A target version may be something that is yet unreleased, so filter that out
         allVersions.removeAll { !releasedVersions.contains(it) }
 
-        assert !allVersions.isEmpty()
+        assert allowEmptyTargetVersions || !allVersions.isEmpty()
 
         File projectDir = testProjectLocator.findProjectDir(testProject)
 
@@ -95,71 +87,35 @@ public class CrossVersionPerformanceTestRunner extends PerformanceTestSpec {
             baselineVersion.maxExecutionTimeRegression = maxExecutionTimeRegression
             baselineVersion.maxMemoryRegression = maxMemoryRegression
 
-            println "Gradle ${baselineVersion.version}..."
             runVersion(buildContext.distribution(baselineVersion.version), projectDir, baselineVersion.results)
         }
 
-        println "Current Gradle..."
         runVersion(current, projectDir, results.current)
 
         reporter.report(results)
-        results
+        results.assertEveryBuildSucceeds()
+
+        return results
     }
 
     private void runVersion(GradleDistribution dist, File projectDir, MeasuredOperationList results) {
-        warmUpRuns.times {
-            println "Executing warm-up run #${it + 1}"
-            runOnce(dist, projectDir, new MeasuredOperationList())
+        def builder = BuildExperimentSpec.builder()
+                .projectName(testId)
+                .displayName(dist.version.version)
+                .warmUpCount(warmUpRuns)
+                .invocationCount(runs)
+                .invocation {
+            workingDirectory(projectDir)
+            distribution(dist)
+            tasksToRun(this.tasksToRun as String[])
+            args(this.args as String[])
+            gradleOpts(this.gradleOpts as String[])
+            useDaemon(this.useDaemon)
         }
-        runs.times {
-            println "Executing test run #${it + 1}"
-            runOnce(dist, projectDir, results)
-        }
-        if (useDaemon) {
-            executerProvider.executer(new RunnerBackedBuildParametersSpecification(this), dist, projectDir, this.testDirectoryProvider).withTasks("--stop").run()
-        }
+
+        def spec = builder.build()
+
+        experimentRunner.run(spec, results)
     }
 
-    private void runOnce(GradleDistribution dist, File projectDir, MeasuredOperationList results) {
-        gcCollector.useDaemon(useDaemon)
-        def executer = executerProvider.executer(new RunnerBackedBuildParametersSpecification(this), dist, projectDir, this.testDirectoryProvider)
-        dataCollector.beforeExecute(projectDir, executer)
-
-        def operation = timer.measure { MeasuredOperation operation ->
-            executer.run()
-        }
-        if (operation.exception == null) {
-            dataCollector.collect(projectDir, operation)
-        }
-        results.add(operation)
-    }
-
-    private static class RunnerBackedBuildParametersSpecification implements BuildParametersSpecification {
-
-        final CrossVersionPerformanceTestRunner runner
-
-        RunnerBackedBuildParametersSpecification(CrossVersionPerformanceTestRunner runner) {
-            this.runner = runner
-        }
-
-        @Override
-        String[] getTasksToRun() {
-            runner.tasksToRun as String[]
-        }
-
-        @Override
-        String[] getArgs() {
-            runner.args as String[]
-        }
-
-        @Override
-        String[] getGradleOpts() {
-            runner.gradleOpts as String[]
-        }
-
-        @Override
-        boolean getUseDaemon() {
-            runner.useDaemon
-        }
-    }
 }
